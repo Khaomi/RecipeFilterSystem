@@ -1,0 +1,20 @@
+services:
+  frontend:
+    restart: no
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./frontend/src
+          target: /app/src
+        - action: rebuild
+          path: ./frontend/pyproject.toml
+
+  backend:
+    restart: no
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./backend/src
+          target: /app/src
+        - action: rebuild
+          path: ./backend/pyproject.toml
