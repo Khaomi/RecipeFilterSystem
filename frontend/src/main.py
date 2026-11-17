@@ -2,6 +2,5 @@
 
 from threading import Event
 
-
 print("Frontend process started")
 Event().wait()

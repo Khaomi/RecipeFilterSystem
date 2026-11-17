@@ -2,6 +2,5 @@
 
 from threading import Event
 
-
 print("Backend process started")
 Event().wait()

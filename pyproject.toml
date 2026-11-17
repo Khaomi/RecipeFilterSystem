@@ -1,7 +1,18 @@
 [project]
-name = "project"
+name = "RecipeFilterSystem"
 version = "0.1.0"
 requires-python = ">=3.15"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.5",
+]
+
+[tool.setuptools]
+packages = [
+    "frontend",
+    "backend"
+]
 
 # Incase any one of you use uv (like me)
 [tool.uv.workspace]
