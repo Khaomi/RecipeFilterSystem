@@ -32,8 +32,8 @@ jobs:
 
       - name: Build Dockerfile
         run: |
-          docker build frontend
-          docker build backend
+          docker build -f frontend/Dockerfile .
+          docker build -f backend/Dockerfile .
 
 
 
