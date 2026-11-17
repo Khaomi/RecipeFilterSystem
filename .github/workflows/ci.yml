@@ -22,6 +22,9 @@ jobs:
       - name: Lint
         run: uv run ruff check .
       
+      - name: Setup
+        run: cp .env.example .env
+      
       - name: Validate docker compose
         run: |
           docker compose -f compose.yml config --quiet
