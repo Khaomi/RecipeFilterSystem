@@ -5,9 +5,11 @@ services:
       watch:
         - action: sync+restart
           path: ./frontend/src
-          target: /app/src
+          target: /app/frontend/src
         - action: rebuild
           path: ./frontend/pyproject.toml
+        - action: rebuild
+          path: ./frontend/Dockerfile
 
   backend:
     restart: no
@@ -15,6 +17,8 @@ services:
       watch:
         - action: sync+restart
           path: ./backend/src
-          target: /app/src
+          target: /app/backend/src
         - action: rebuild
           path: ./backend/pyproject.toml
+        - action: rebuild
+          path: ./backend/Dockerfile
