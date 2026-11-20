@@ -32,7 +32,20 @@ import { HistoryModal } from '../components/HistoryModal';
 import { InventoryModal } from '../components/InventoryModal';
 import { RecipeDetailModal } from '../Equipment/RecipeDetailModal';
 
-const ALL_TAGS = ['breakfast', 'oats', 'vegan', 'quick', 'savory', 'sweet', 'vegetarian', 'greens'];
+const ALL_TAGS = [
+  'breakfast',
+  'oats',
+  'vegan',
+  'quick',
+  'savory',
+  'sweet',
+  'vegetarian',
+  'greens',
+  'meal-prep',
+  'high-protein',
+  'comfort',
+  'low-calorie',
+];
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -40,7 +53,11 @@ export default function App() {
   const [inventoryMode, setInventoryMode] = useState<'ingredients' | 'equipments' | null>(null);
   const [bookmarkOnlyView, setBookmarkOnlyView] = useState(false);
 
+  // Shows tag panel when tapping/focusing the search bar
+  const [tagsPanelOpen, setTagsPanelOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [tagSearchQuery, setTagSearchQuery] = useState('');
+
   const [userIngredients, setUserIngredients] = useState<string[]>(INITIAL_INGREDIENTS);
   const [userEquipment, setUserEquipment] = useState<string[]>(INITIAL_EQUIPMENT);
   const [userAllergies] = useState<string[]>(INITIAL_ALLERGIES);
@@ -66,7 +83,6 @@ export default function App() {
   // Include/Exclude tags: 1 click -> green | 2 click -> red | 3 click -> cancel
   const [tagStates, setTagStates] = useState<Record<string, TriState>>({});
 
-  // Load persisted local state
   useEffect(() => {
     (async () => {
       const [b, sh, vr, ing, eq] = await Promise.all([
@@ -129,7 +145,6 @@ export default function App() {
     await AsyncStorage.setItem('@orderup_visited', JSON.stringify(updated));
   };
 
-  // Inventory CRUD handlers
   const updateIngredientsList = async (next: string[]) => {
     setUserIngredients(next);
     await AsyncStorage.setItem('@orderup_ingredients', JSON.stringify(next));
@@ -139,6 +154,17 @@ export default function App() {
     setUserEquipment(next);
     await AsyncStorage.setItem('@orderup_equipment', JSON.stringify(next));
   };
+
+  const filteredTags = useMemo(() => {
+    const q = tagSearchQuery.trim().toLowerCase();
+    if (!q) return ALL_TAGS;
+    return ALL_TAGS.filter((t) => t.toLowerCase().includes(q));
+  }, [tagSearchQuery]);
+
+  const activeTagCount = useMemo(
+    () => Object.values(tagStates).filter((st) => st !== 'neutral').length,
+    [tagStates]
+  );
 
   const displayedRecipes = useMemo(() => {
     const ranked = rankRecipes(INITIAL_RECIPES, {
@@ -161,7 +187,6 @@ export default function App() {
     bookmarks,
   ]);
 
-  // Style helpers: return style objects instead of Tailwind class strings
   const getPrefStyle = (state: PrefState) => {
     if (state === 'green') return styles.chipGreen;
     if (state === 'red') return styles.chipRed;
@@ -186,21 +211,38 @@ export default function App() {
             <Text style={styles.appTitle}>Order up!</Text>
           </View>
 
-          {bookmarkOnlyView && (
+          <View style={styles.headerActions}>
             <TouchableOpacity
-              onPress={() => setBookmarkOnlyView(false)}
-              style={styles.bookmarkPill}
+              onPress={() => setTagsPanelOpen((prev) => !prev)}
+              style={styles.tagsToggleBtn}
             >
-              <Text style={styles.bookmarkPillText}>Bookmarks Only ✕</Text>
+              <Ionicons name="pricetags-outline" size={14} color="#111827" />
+              <Text style={styles.tagsToggleText}>
+                Tags{activeTagCount > 0 ? ` (${activeTagCount})` : ''}
+              </Text>
             </TouchableOpacity>
-          )}
+
+            {bookmarkOnlyView && (
+              <TouchableOpacity
+                onPress={() => setBookmarkOnlyView(false)}
+                style={styles.bookmarkPill}
+              >
+                <Text style={styles.bookmarkPillText}>Bookmarks Only ✕</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
-        {/* Primary Search Box */}
-        <View style={styles.searchBox}>
+        {/* Primary Search Box: tapping/focusing opens the tags section */}
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setTagsPanelOpen(true)}
+          style={styles.searchBox}
+        >
           <Ionicons name="search" size={18} color="#6B7280" />
           <TextInput
             value={searchQuery}
+            onFocus={() => setTagsPanelOpen(true)}
             onChangeText={setSearchQuery}
             onSubmitEditing={() => commitSearchHistory(searchQuery)}
             placeholder="Search recipe by name..."
@@ -212,7 +254,7 @@ export default function App() {
               <Ionicons name="close-circle" size={18} color="#9CA3AF" />
             </TouchableOpacity>
           )}
-        </View>
+        </TouchableOpacity>
 
         {/* Preferences: 1 click -> green | 2 click -> red */}
         <ScrollView
@@ -236,27 +278,58 @@ export default function App() {
           })}
         </ScrollView>
 
-        {/* Include / Exclude Tags: 1 click -> green | 2 click -> red | 3 click -> cancel */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.tagScroll}
-        >
-          {ALL_TAGS.map((tag) => {
-            const st = tagStates[tag] || 'neutral';
-            return (
+        {/* Expandable Tags Section (shown when search bar is tapped/focused or Tags button pressed) */}
+        {tagsPanelOpen && (
+          <View style={styles.tagSection}>
+            <View style={styles.tagSearchRow}>
+              <View style={styles.tagSearchBox}>
+                <Ionicons name="pricetag-outline" size={16} color="#6B7280" />
+                <TextInput
+                  value={tagSearchQuery}
+                  onChangeText={setTagSearchQuery}
+                  placeholder="Search tags (e.g. vegan, quick, oats)..."
+                  style={styles.tagSearchInput}
+                />
+                {tagSearchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setTagSearchQuery('')}>
+                    <Ionicons name="close-circle" size={16} color="#9CA3AF" />
+                  </TouchableOpacity>
+                )}
+              </View>
+
               <TouchableOpacity
-                key={tag}
-                onPress={() => cycleTag(tag)}
-                style={[styles.tagChip, getTagStyle(st)]}
+                onPress={() => setTagsPanelOpen(false)}
+                style={styles.hideTagsBtn}
               >
-                <Text style={[styles.tagChipText, st !== 'neutral' && styles.textWhite]}>
-                  #{tag} {st === 'include' ? '+' : st === 'exclude' ? '−' : ''}
-                </Text>
+                <Text style={styles.hideTagsText}>Done</Text>
               </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.tagScroll}
+            >
+              {filteredTags.map((tag) => {
+                const st = tagStates[tag] || 'neutral';
+                return (
+                  <TouchableOpacity
+                    key={tag}
+                    onPress={() => cycleTag(tag)}
+                    style={[styles.tagChip, getTagStyle(st)]}
+                  >
+                    <Text style={[styles.tagChipText, st !== 'neutral' && styles.textWhite]}>
+                      #{tag} {st === 'include' ? '+' : st === 'exclude' ? '−' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {filteredTags.length === 0 && (
+                <Text style={styles.noTagsMatchText}>No matching tags</Text>
+              )}
+            </ScrollView>
+          </View>
+        )}
       </View>
 
       {/* Homepage Recipe Grid */}
@@ -394,12 +467,26 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   menuButton: { padding: 4 },
   appTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
 
+  tagsToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  tagsToggleText: { fontSize: 12, fontWeight: '700', color: '#111827' },
+
   bookmarkPill: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 999,
     backgroundColor: '#FFF1F2',
     borderWidth: 1,
@@ -407,7 +494,7 @@ const styles = StyleSheet.create({
   },
   bookmarkPillText: { fontSize: 12, fontWeight: '700', color: '#E11D48' },
 
-  // Search
+  // Recipe Search
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -430,7 +517,46 @@ const styles = StyleSheet.create({
   prefChipOff: { backgroundColor: '#FFFFFF', borderColor: '#E5E7EB' },
   prefChipText: { fontSize: 12, fontWeight: '600', color: '#374151' },
 
-  // Tag chips
+  // Expandable Tag Section & Tag Search below Recipe Search
+  tagSection: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  tagSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tagSearchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  tagSearchInput: {
+    flex: 1,
+    marginLeft: 6,
+    fontSize: 13,
+    color: '#111827',
+  },
+  hideTagsBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+  },
+  hideTagsText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
   tagScroll: { marginTop: 8, paddingBottom: 4 },
   tagChip: {
     marginRight: 8,
@@ -445,6 +571,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#374151',
     textTransform: 'capitalize',
+  },
+  noTagsMatchText: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    paddingVertical: 4,
   },
 
   // Shared active states (green = include/on, red = exclude/avoid)
