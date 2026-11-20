@@ -51,6 +51,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ZB6NdtfZlzEkAdG9ELzp8bSXpNUQuuym}
     volumes:
       - postgres_data:/var/lib/postgresql
+      - ./backend/src/recipe_schema_ver_01.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
 
   mongodb:
     image: mongo:9.0
