@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TouchableOpacity, Modal, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, FlatList, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { HistoryEntry, Recipe } from '../type/recipe';
 
@@ -30,16 +30,16 @@ export const HistoryModal: React.FC<Props> = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <View className="flex-1 justify-end bg-black/40">
-        <View className="bg-white rounded-t-3xl p-5 max-h-[75%]">
-          <View className="flex-row items-center justify-between mb-4">
-            <View className="flex-row items-center gap-2">
+      <View style={styles.overlay}>
+        <View style={styles.sheet}>
+          <View style={styles.headerRow}>
+            <View style={styles.headerLeft}>
               {mode !== 'menu' && (
-                <TouchableOpacity onPress={() => setMode('menu')} className="p-1">
+                <TouchableOpacity onPress={() => setMode('menu')} style={styles.iconButton}>
                   <Ionicons name="arrow-back" size={20} color="#111827" />
                 </TouchableOpacity>
               )}
-              <Text className="text-lg font-bold text-gray-900">
+              <Text style={styles.title}>
                 {mode === 'menu'
                   ? 'History'
                   : mode === 'search'
@@ -47,36 +47,30 @@ export const HistoryModal: React.FC<Props> = ({
                   : 'Visited Recipe'}
               </Text>
             </View>
-            <TouchableOpacity onPress={handleClose} className="p-1">
+            <TouchableOpacity onPress={handleClose} style={styles.iconButton}>
               <Ionicons name="close" size={22} color="#374151" />
             </TouchableOpacity>
           </View>
 
           {mode === 'menu' && (
-            <View className="gap-3 pb-4">
-              <TouchableOpacity
-                onPress={() => setMode('search')}
-                className="flex-row items-center justify-between p-4 rounded-2xl border border-gray-200 bg-gray-50"
-              >
-                <View className="flex-row items-center gap-3">
+            <View style={styles.menu}>
+              <TouchableOpacity onPress={() => setMode('search')} style={styles.menuCard}>
+                <View style={styles.menuCardLeft}>
                   <Ionicons name="search-outline" size={22} color="#111827" />
                   <View>
-                    <Text className="text-sm font-bold text-gray-900">Search history</Text>
-                    <Text className="text-xs text-gray-500">{searchHistory.length} recent searches</Text>
+                    <Text style={styles.menuCardTitle}>Search history</Text>
+                    <Text style={styles.menuCardSub}>{searchHistory.length} recent searches</Text>
                   </View>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#6B7280" />
               </TouchableOpacity>
 
-              <TouchableOpacity
-                onPress={() => setMode('visited')}
-                className="flex-row items-center justify-between p-4 rounded-2xl border border-gray-200 bg-gray-50"
-              >
-                <View className="flex-row items-center gap-3">
+              <TouchableOpacity onPress={() => setMode('visited')} style={styles.menuCard}>
+                <View style={styles.menuCardLeft}>
                   <Ionicons name="eye-outline" size={22} color="#111827" />
                   <View>
-                    <Text className="text-sm font-bold text-gray-900">Visited recipe</Text>
-                    <Text className="text-xs text-gray-500">{visitedRecipes.length} recipes opened</Text>
+                    <Text style={styles.menuCardTitle}>Visited recipe</Text>
+                    <Text style={styles.menuCardSub}>{visitedRecipes.length} recipes opened</Text>
                   </View>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#6B7280" />
@@ -88,19 +82,17 @@ export const HistoryModal: React.FC<Props> = ({
             <FlatList
               data={searchHistory}
               keyExtractor={(item) => item.id}
-              ListEmptyComponent={
-                <Text className="text-center text-gray-400 py-8">No search history yet.</Text>
-              }
+              ListEmptyComponent={<Text style={styles.emptyText}>No search history yet.</Text>}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   onPress={() => {
                     onSelectSearchQuery(item.query);
                     handleClose();
                   }}
-                  className="flex-row items-center justify-between py-3 border-b border-gray-100"
+                  style={styles.listRow}
                 >
-                  <Text className="text-sm font-medium text-gray-800">{item.query}</Text>
-                  <Text className="text-xs text-gray-400">{item.timestamp}</Text>
+                  <Text style={styles.queryText}>{item.query}</Text>
+                  <Text style={styles.timestampText}>{item.timestamp}</Text>
                 </TouchableOpacity>
               )}
             />
@@ -110,19 +102,17 @@ export const HistoryModal: React.FC<Props> = ({
             <FlatList
               data={visitedRecipes}
               keyExtractor={(item, idx) => `${item.id}-${idx}`}
-              ListEmptyComponent={
-                <Text className="text-center text-gray-400 py-8">No visited recipes yet.</Text>
-              }
+              ListEmptyComponent={<Text style={styles.emptyText}>No visited recipes yet.</Text>}
               renderItem={({ item }) => (
                 <TouchableOpacity
                   onPress={() => {
                     handleClose();
                     onSelectRecipe(item);
                   }}
-                  className="flex-row items-center justify-between py-3 border-b border-gray-100"
+                  style={styles.listRow}
                 >
-                  <Text className="text-sm font-semibold text-gray-800">{item.title}</Text>
-                  <Text className="text-xs text-gray-500">{item.totalTimeMinutes} min</Text>
+                  <Text style={styles.recipeTitle}>{item.title}</Text>
+                  <Text style={styles.recipeTime}>{item.totalTimeMinutes} min</Text>
                 </TouchableOpacity>
               )}
             />
@@ -132,3 +122,54 @@ export const HistoryModal: React.FC<Props> = ({
     </Modal>
   );
 };
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '75%',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconButton: { padding: 4 },
+  title: { fontSize: 18, fontWeight: '700', color: '#111827' },
+
+  // Menu
+  menu: { gap: 12, paddingBottom: 16 },
+  menuCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  },
+  menuCardLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  menuCardTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  menuCardSub: { fontSize: 12, color: '#6B7280' },
+
+  // Lists
+  listRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  queryText: { fontSize: 14, fontWeight: '500', color: '#1F2937' },
+  timestampText: { fontSize: 12, color: '#9CA3AF' },
+  recipeTitle: { fontSize: 14, fontWeight: '600', color: '#1F2937' },
+  recipeTime: { fontSize: 12, color: '#6B7280' },
+  emptyText: { textAlign: 'center', color: '#9CA3AF', paddingVertical: 32 },
+});

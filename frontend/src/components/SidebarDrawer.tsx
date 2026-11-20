@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, Modal, Pressable } from 'react-native';
+import { View, Text, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 interface Props {
@@ -33,44 +33,92 @@ export const SidebarDrawer: React.FC<Props> = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View className="flex-1 flex-row bg-black/40">
-        <View className="w-72 bg-white h-full p-5 justify-between">
+      <View style={styles.overlay}>
+        <View style={styles.drawer}>
           <View>
-            <View className="flex-row items-center justify-between pb-4 border-b border-gray-100">
-              <Text className="text-xl font-extrabold text-gray-900">Order up!</Text>
-              <TouchableOpacity onPress={onClose} className="p-1">
+            <View style={styles.headerRow}>
+              <Text style={styles.title}>Order up!</Text>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
                 <Ionicons name="close" size={22} color="#374151" />
               </TouchableOpacity>
             </View>
 
-            <View className="mt-5 gap-2">
+            <View style={styles.menuList}>
               {menuItems.map((item) => (
-                <TouchableOpacity
+                // Pressable's `pressed` state replaces Tailwind's active:bg-gray-100
+                <Pressable
                   key={item.key}
                   onPress={() => {
                     onClose();
                     onSelectSection(item.key);
                   }}
-                  className="flex-row items-center justify-between px-3.5 py-3 rounded-xl bg-gray-50 active:bg-gray-100"
+                  style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
                 >
-                  <View className="flex-row items-center gap-3">
+                  <View style={styles.menuItemLeft}>
                     <Ionicons name={item.icon} size={20} color="#111827" />
-                    <Text className="text-sm font-semibold text-gray-800">{item.label}</Text>
+                    <Text style={styles.menuLabel}>{item.label}</Text>
                   </View>
                   {item.badge !== undefined && (
-                    <View className="bg-gray-200 px-2 py-0.5 rounded-full">
-                      <Text className="text-xs font-bold text-gray-700">{item.badge}</Text>
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{item.badge}</Text>
                     </View>
                   )}
-                </TouchableOpacity>
+                </Pressable>
               ))}
             </View>
           </View>
 
-          <Text className="text-xs text-gray-400">Local Mode • Saved on Device</Text>
+          <Text style={styles.footer}>Local Mode • Saved on Device</Text>
         </View>
-        <Pressable className="flex-1" onPress={onClose} />
+        <Pressable style={styles.backdrop} onPress={onClose} />
       </View>
     </Modal>
   );
 };
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1, flexDirection: 'row', backgroundColor: 'rgba(0,0,0,0.4)' },
+  drawer: {
+    width: 288,
+    height: '100%',
+    backgroundColor: '#FFFFFF',
+    padding: 20,
+    justifyContent: 'space-between',
+  },
+  backdrop: { flex: 1 },
+
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  title: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  closeButton: { padding: 4 },
+
+  menuList: { marginTop: 20, gap: 8 },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: '#F9FAFB',
+  },
+  menuItemPressed: { backgroundColor: '#F3F4F6' },
+  menuItemLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  menuLabel: { fontSize: 14, fontWeight: '600', color: '#1F2937' },
+
+  badge: {
+    backgroundColor: '#E5E7EB',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  badgeText: { fontSize: 12, fontWeight: '700', color: '#374151' },
+
+  footer: { fontSize: 12, color: '#9CA3AF' },
+});

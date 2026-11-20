@@ -1,5 +1,13 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, FlatList } from 'react-native';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Modal,
+  FlatList,
+  StyleSheet,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 interface Props {
@@ -46,10 +54,10 @@ export const InventoryModal: React.FC<Props> = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View className="flex-1 justify-end bg-black/40">
-        <View className="bg-white rounded-t-3xl p-5 max-h-[80%]">
-          <View className="flex-row items-center justify-between mb-4">
-            <Text className="text-lg font-bold text-gray-900">{title}</Text>
+      <View style={styles.overlay}>
+        <View style={styles.sheet}>
+          <View style={styles.headerRow}>
+            <Text style={styles.title}>{title}</Text>
             <TouchableOpacity
               onPress={() => {
                 setEditingIndex(null);
@@ -62,18 +70,15 @@ export const InventoryModal: React.FC<Props> = ({
           </View>
 
           {/* Add / Update Row */}
-          <View className="flex-row gap-2 mb-4">
+          <View style={styles.addRow}>
             <TextInput
               value={inputVal}
               onChangeText={setInputVal}
               placeholder={placeholder}
-              className="flex-1 border border-gray-300 rounded-xl px-3.5 py-2.5 text-sm text-gray-900"
+              style={styles.input}
             />
-            <TouchableOpacity
-              onPress={handleSave}
-              className="bg-gray-900 px-4 rounded-xl justify-center items-center"
-            >
-              <Text className="text-white text-xs font-bold">
+            <TouchableOpacity onPress={handleSave} style={styles.saveButton}>
+              <Text style={styles.saveButtonText}>
                 {editingIndex !== null ? 'Update' : 'Add'}
               </Text>
             </TouchableOpacity>
@@ -82,13 +87,11 @@ export const InventoryModal: React.FC<Props> = ({
           <FlatList
             data={items}
             keyExtractor={(item, idx) => `${item}-${idx}`}
-            ListEmptyComponent={
-              <Text className="text-center text-gray-400 py-6">No items added yet.</Text>
-            }
+            ListEmptyComponent={<Text style={styles.emptyText}>No items added yet.</Text>}
             renderItem={({ item, index }) => (
-              <View className="flex-row items-center justify-between py-2.5 border-b border-gray-100">
-                <Text className="text-sm font-medium text-gray-800">{item}</Text>
-                <View className="flex-row items-center gap-3">
+              <View style={styles.itemRow}>
+                <Text style={styles.itemText}>{item}</Text>
+                <View style={styles.itemActions}>
                   <TouchableOpacity onPress={() => startEdit(index, item)}>
                     <Ionicons name="create-outline" size={18} color="#2563EB" />
                   </TouchableOpacity>
@@ -104,3 +107,53 @@ export const InventoryModal: React.FC<Props> = ({
     </Modal>
   );
 };
+
+const styles = StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 20,
+    maxHeight: '80%',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  title: { fontSize: 18, fontWeight: '700', color: '#111827' },
+
+  addRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  input: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#111827',
+  },
+  saveButton: {
+    backgroundColor: '#111827',
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  saveButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' },
+
+  itemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  itemText: { fontSize: 14, fontWeight: '500', color: '#1F2937' },
+  itemActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  emptyText: { textAlign: 'center', color: '#9CA3AF', paddingVertical: 24 },
+});

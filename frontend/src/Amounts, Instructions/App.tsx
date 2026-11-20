@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  StyleSheet,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,7 +30,7 @@ import { rankRecipes } from '../utils/ranking';
 import { SidebarDrawer } from '../components/SidebarDrawer';
 import { HistoryModal } from '../components/HistoryModal';
 import { InventoryModal } from '../components/InventoryModal';
-import { RecipeDetailModal } from '../components/RecipeDetailModal';
+import { RecipeDetailModal } from '../Equipment/RecipeDetailModal';
 
 const ALL_TAGS = ['breakfast', 'oats', 'vegan', 'quick', 'savory', 'sweet', 'vegetarian', 'greens'];
 
@@ -160,49 +161,50 @@ export default function App() {
     bookmarks,
   ]);
 
+  // Style helpers: return style objects instead of Tailwind class strings
   const getPrefStyle = (state: PrefState) => {
-    if (state === 'green') return 'bg-emerald-600 border-emerald-600 text-white';
-    if (state === 'red') return 'bg-rose-600 border-rose-600 text-white';
-    return 'bg-white border-gray-200 text-gray-700';
+    if (state === 'green') return styles.chipGreen;
+    if (state === 'red') return styles.chipRed;
+    return styles.prefChipOff;
   };
 
   const getTagStyle = (state: TriState) => {
-    if (state === 'include') return 'bg-emerald-600 border-emerald-600 text-white';
-    if (state === 'exclude') return 'bg-rose-600 border-rose-600 text-white';
-    return 'bg-gray-100 border-gray-200 text-gray-700';
+    if (state === 'include') return styles.chipGreen;
+    if (state === 'exclude') return styles.chipRed;
+    return styles.tagChipOff;
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-gray-50">
+    <SafeAreaView style={styles.container}>
       {/* Header + Searchbar */}
-      <View className="bg-white px-4 pt-3 pb-2 border-b border-gray-100">
-        <View className="flex-row items-center justify-between mb-3">
-          <View className="flex-row items-center gap-2.5">
-            <TouchableOpacity onPress={() => setSidebarOpen(true)} className="p-1">
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuButton}>
               <Ionicons name="menu" size={24} color="#111827" />
             </TouchableOpacity>
-            <Text className="text-xl font-extrabold text-gray-900">Order up!</Text>
+            <Text style={styles.appTitle}>Order up!</Text>
           </View>
 
           {bookmarkOnlyView && (
             <TouchableOpacity
               onPress={() => setBookmarkOnlyView(false)}
-              className="px-2.5 py-1 rounded-full bg-rose-50 border border-rose-200"
+              style={styles.bookmarkPill}
             >
-              <Text className="text-xs font-bold text-rose-600">Bookmarks Only ✕</Text>
+              <Text style={styles.bookmarkPillText}>Bookmarks Only ✕</Text>
             </TouchableOpacity>
           )}
         </View>
 
         {/* Primary Search Box */}
-        <View className="flex-row items-center bg-gray-100 rounded-xl px-3 py-2">
+        <View style={styles.searchBox}>
           <Ionicons name="search" size={18} color="#6B7280" />
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
             onSubmitEditing={() => commitSearchHistory(searchQuery)}
             placeholder="Search recipe by name..."
-            className="flex-1 ml-2 text-sm text-gray-900"
+            style={styles.searchInput}
             returnKeyType="search"
           />
           {searchQuery.length > 0 && (
@@ -213,16 +215,20 @@ export default function App() {
         </View>
 
         {/* Preferences: 1 click -> green | 2 click -> red */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-2.5">
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.prefScroll}
+        >
           {PREFERENCES_LIST.map((pref) => {
             const st = prefStates[pref];
             return (
               <TouchableOpacity
                 key={pref}
                 onPress={() => cyclePref(pref)}
-                className={`mr-2 px-3 py-1 rounded-full border ${getPrefStyle(st)}`}
+                style={[styles.prefChip, getPrefStyle(st)]}
               >
-                <Text className={`text-xs font-semibold ${st !== 'off' ? 'text-white' : 'text-gray-700'}`}>
+                <Text style={[styles.prefChipText, st !== 'off' && styles.textWhite]}>
                   {pref} {st === 'green' ? '✓' : st === 'red' ? '✕' : ''}
                 </Text>
               </TouchableOpacity>
@@ -231,16 +237,20 @@ export default function App() {
         </ScrollView>
 
         {/* Include / Exclude Tags: 1 click -> green | 2 click -> red | 3 click -> cancel */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-2 pb-1">
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.tagScroll}
+        >
           {ALL_TAGS.map((tag) => {
             const st = tagStates[tag] || 'neutral';
             return (
               <TouchableOpacity
                 key={tag}
                 onPress={() => cycleTag(tag)}
-                className={`mr-2 px-2.5 py-1 rounded-md border ${getTagStyle(st)}`}
+                style={[styles.tagChip, getTagStyle(st)]}
               >
-                <Text className={`text-xs font-medium capitalize ${st !== 'neutral' ? 'text-white' : 'text-gray-700'}`}>
+                <Text style={[styles.tagChipText, st !== 'neutral' && styles.textWhite]}>
                   #{tag} {st === 'include' ? '+' : st === 'exclude' ? '−' : ''}
                 </Text>
               </TouchableOpacity>
@@ -258,24 +268,21 @@ export default function App() {
         renderItem={({ item }) => {
           const isSaved = bookmarks.includes(item.id);
           return (
-            <TouchableOpacity
-              onPress={() => openRecipe(item)}
-              className="flex-1 m-1.5 bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm"
-            >
-              <Image source={{ uri: item.image }} className="w-full h-36 bg-gray-200" />
-              <View className="p-2.5">
-                <Text numberOfLines={2} className="text-sm font-bold text-gray-900">
+            <TouchableOpacity onPress={() => openRecipe(item)} style={styles.card}>
+              <Image source={{ uri: item.image }} style={styles.cardImage} />
+              <View style={styles.cardBody}>
+                <Text numberOfLines={2} style={styles.cardTitle}>
                   {item.title}
                 </Text>
 
                 {/* Heart = Bookmark / Time = Total time for recipe */}
-                <View className="flex-row items-center justify-between mt-2.5 pt-2 border-t border-gray-100">
+                <View style={styles.cardFooter}>
                   <TouchableOpacity
                     onPress={(e) => {
                       e.stopPropagation();
                       toggleBookmark(item.id);
                     }}
-                    className="flex-row items-center gap-1"
+                    style={styles.heartButton}
                   >
                     <Ionicons
                       name={isSaved ? 'heart' : 'heart-outline'}
@@ -284,11 +291,9 @@ export default function App() {
                     />
                   </TouchableOpacity>
 
-                  <View className="flex-row items-center gap-1">
+                  <View style={styles.timeRow}>
                     <Ionicons name="time-outline" size={14} color="#6B7280" />
-                    <Text className="text-xs font-semibold text-gray-600">
-                      {item.totalTimeMinutes}m
-                    </Text>
+                    <Text style={styles.timeText}>{item.totalTimeMinutes}m</Text>
                   </View>
                 </View>
               </View>
@@ -296,7 +301,7 @@ export default function App() {
           );
         }}
         ListEmptyComponent={
-          <Text className="text-center text-gray-400 mt-12">
+          <Text style={styles.emptyText}>
             No matching recipes found with current filters/equipment.
           </Text>
         }
@@ -369,3 +374,114 @@ export default function App() {
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#F9FAFB' },
+
+  // Header
+  header: {
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  menuButton: { padding: 4 },
+  appTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
+
+  bookmarkPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+  },
+  bookmarkPillText: { fontSize: 12, fontWeight: '700', color: '#E11D48' },
+
+  // Search
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  searchInput: { flex: 1, marginLeft: 8, fontSize: 14, color: '#111827' },
+
+  // Preference chips
+  prefScroll: { marginTop: 10 },
+  prefChip: {
+    marginRight: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  prefChipOff: { backgroundColor: '#FFFFFF', borderColor: '#E5E7EB' },
+  prefChipText: { fontSize: 12, fontWeight: '600', color: '#374151' },
+
+  // Tag chips
+  tagScroll: { marginTop: 8, paddingBottom: 4 },
+  tagChip: {
+    marginRight: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  tagChipOff: { backgroundColor: '#F3F4F6', borderColor: '#E5E7EB' },
+  tagChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#374151',
+    textTransform: 'capitalize',
+  },
+
+  // Shared active states (green = include/on, red = exclude/avoid)
+  chipGreen: { backgroundColor: '#059669', borderColor: '#059669' },
+  chipRed: { backgroundColor: '#E11D48', borderColor: '#E11D48' },
+  textWhite: { color: '#FFFFFF' },
+
+  // Recipe cards
+  card: {
+    flex: 1,
+    margin: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  cardImage: { width: '100%', height: 144, backgroundColor: '#E5E7EB' },
+  cardBody: { padding: 10 },
+  cardTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  heartButton: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  timeText: { fontSize: 12, fontWeight: '600', color: '#4B5563' },
+
+  emptyText: { textAlign: 'center', color: '#9CA3AF', marginTop: 48 },
+});
