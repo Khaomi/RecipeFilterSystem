@@ -4,18 +4,23 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "expo start"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0"
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "^3.1.1",
-    "react-native": "^0.88.1"
+    "expo": "^58.0.26",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "^0.88.1",
+    "react-native-web": "^0.21.4"
   }
 }
