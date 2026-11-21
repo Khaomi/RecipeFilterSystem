@@ -7,6 +7,9 @@ services:
     env_file: .env
     environment:
       - BACKEND_URL=${BACKEND_URL:-http://backend:8000}
+      - EXPO_PUBLIC_API_URL=${EXPO_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "${FRONTEND_PORT:-8081}:8081"
     depends_on:
       backend:
         condition: service_started
@@ -51,6 +54,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ZB6NdtfZlzEkAdG9ELzp8bSXpNUQuuym}
     volumes:
       - postgres_data:/var/lib/postgresql
+      - ./backend/src/recipe_schema_ver_02.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
 
   mongodb:
     image: mongo:9.0
