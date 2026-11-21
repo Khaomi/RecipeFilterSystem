@@ -25,6 +25,8 @@ export interface RecipeIngredient {
   category: string;
   amount: string;
   tag: string;
+  optional?: boolean;
+  owned?: boolean;
 }
 
 export interface Recipe {
@@ -32,6 +34,7 @@ export interface Recipe {
   title: string;
   image: string;
   totalTimeMinutes: number;
+  serving?: number | null;
   tags: string[];
   ingredients: RecipeIngredient[];
   equipment: string[];
@@ -39,6 +42,9 @@ export interface Recipe {
   allergens: string[];
   instructions: string[];
   tip?: string;
+  // From search results only: how the recipe fits the user's inventory.
+  missingCount?: number;
+  allergenOptional?: boolean;
 }
 
 export interface HistoryEntry {

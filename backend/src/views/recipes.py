@@ -28,6 +28,9 @@ def search_recipes(body: SearchBody):
     # Ingredient/category includes are "any": a recipe needs at least one match
     # and ranks higher with more matches. Preference includes are "all".
     # Every exclude is a hard filter.
+    # Inventory: recipes needing equipment the user lacks, or containing a required allergen,
+    # are cut. An optional allergen keeps the recipe but sorts it last (allergen_optional).
+    # Then recipes rank by fewest missing ingredients; staples count as owned.
     with pg.connection() as conn:
         rows = conn.execute(
             """
@@ -36,11 +39,32 @@ def search_recipes(body: SearchBody):
                    count(ri.ingredient_id) filter (
                        where ri.ingredient_id = any(%(inc_i)s::int[])
                           or i.category_id = any(%(inc_c)s::int[])
-                   ) as matched_count
+                   ) as matched_count,
+                   count(ri.ingredient_id) filter (
+                       where not ri.is_optional and (ui.ingredient_id is not null or i.is_staple)
+                   ) as owned_count,
+                   count(ri.ingredient_id) filter (
+                       where not ri.is_optional and ui.ingredient_id is null and not i.is_staple
+                   ) as missing_count,
+                   coalesce(bool_or(ua.ingredient_id is not null), false) as allergen_optional
             from recipes r
             left join recipe_ingredients ri using (recipe_id)
             left join ingredients i using (ingredient_id)
+            left join user_ingredients ui on ui.ingredient_id = ri.ingredient_id and ui.user_id = %(u)s
+            left join user_allergies ua on ua.ingredient_id = ri.ingredient_id and ua.user_id = %(u)s
             where r.recipe_name ilike %(name)s
+              and not exists (
+                  select 1
+                  from recipe_equipment re
+                  where re.recipe_id = r.recipe_id
+                    and re.equipment_id not in (select equipment_id from user_equipment where user_id = %(u)s)
+              )
+              and not exists (
+                  select 1
+                  from recipe_ingredients a
+                  join user_allergies aa on aa.ingredient_id = a.ingredient_id and aa.user_id = %(u)s
+                  where a.recipe_id = r.recipe_id and not a.is_optional
+              )
               and not exists (
                   select 1
                   from recipe_ingredients x
@@ -64,10 +88,11 @@ def search_recipes(body: SearchBody):
                        where ri.ingredient_id = any(%(inc_i)s::int[])
                           or i.category_id = any(%(inc_c)s::int[])
                    ) > 0
-            order by matched_count desc, r.recipe_name, r.recipe_id
+            order by allergen_optional, matched_count desc, missing_count, r.recipe_name, r.recipe_id
             limit %(limit)s offset %(offset)s
             """,
             {
+                "u": USER_ID,
                 "name": f"%{body.name}%",
                 "inc_i": body.include_ingredients,
                 "exc_i": body.exclude_ingredients,
@@ -124,14 +149,17 @@ def get_recipe(recipe_id: int):
         recipe["ingredients"] = conn.execute(
             """
             select i.ingredient_id, i.ingredient_name, i.category_id, c.category_name, i.is_staple,
-                   ri.quantity_text, ri.is_optional
+                   ri.quantity_text, ri.is_optional,
+                   -- Same rule as missing_count in search: owned if in inventory or a staple.
+                   (ui.ingredient_id is not null or i.is_staple) as owned
             from recipe_ingredients ri
             join ingredients i using (ingredient_id)
             join ingredient_categories c using (category_id)
+            left join user_ingredients ui on ui.ingredient_id = ri.ingredient_id and ui.user_id = %s
             where ri.recipe_id = %s
             order by ri.is_optional, i.ingredient_name
             """,
-            (recipe_id,),
+            (USER_ID, recipe_id),
         ).fetchall()
         recipe["equipment"] = conn.execute(
             """
@@ -154,6 +182,12 @@ def get_recipe(recipe_id: int):
             (recipe_id,),
         ).fetchall()
 
-    # Instructions, tips, pictures etc. live in Mongo; null if not added yet.
-    recipe["details"] = mongo.recipe_details.find_one({"recipe_id": recipe_id}, {"_id": 0, "recipe_id": 0})
+    # Author, instructions etc. live in Mongo; details is null if not added yet or Mongo is down.
+    # Opening a recipe also logs the visit to visited_recipes.
+    recipe["details"] = None
+    try:
+        recipe["details"] = mongo.recipe_details.find_one({"recipe_id": recipe_id}, {"_id": 0, "recipe_id": 0})
+        mongo.visited_recipes.insert_one({"recipe_id": recipe_id, "visited_at": datetime.now(UTC)})
+    except PyMongoError:
+        pass
     return recipe

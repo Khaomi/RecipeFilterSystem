@@ -1,5 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
+  Animated,
+  Easing,
+  TextStyle,
+  ViewStyle,
   SafeAreaView,
   View,
   Text,
@@ -8,10 +12,11 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  Pressable,
   StyleSheet,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import {
   Recipe,
@@ -20,18 +25,39 @@ import {
   HistoryEntry,
 } from './type/recipe';
 import { SidebarDrawer } from './components/SidebarDrawer';
-import { HistoryModal } from './components/HistoryModal';
+import { HistoryModal, VisitedItem } from './components/HistoryModal';
 import { InventoryModal } from './components/InventoryModal';
 import { RecipeDetailModal } from './Equipment/RecipeDetailModal';
 import {
   API_BASE_URL,
   orderUpApi,
+  AuditLogEntry,
   CatalogCategory,
+  CatalogEquipment,
   CatalogIngredient,
   CatalogPreference,
+  InventoryItem,
+  InventoryKind,
   RecipeSearchItem,
+  RecipeSummary,
   RecipeDetailResponse,
 } from './api/orderUpApi';
+
+const TAG_PANEL_WIDTH = 360;
+const MAX_CONTENT_WIDTH = 1600;
+
+// Web-only CSS transition (react-native-web passes these through), e.g. for hover colors.
+const WEB_FADE = {
+  transitionProperty: 'background-color, color',
+  transitionDuration: '200ms',
+  transitionTimingFunction: 'ease-in-out',
+} as unknown as ViewStyle & TextStyle;
+
+const INVENTORY_TEXT: Record<InventoryKind, { title: string; placeholder: string }> = {
+  ingredients: { title: 'My Ingredients', placeholder: 'Find an ingredient (e.g. Milk)...' },
+  equipment: { title: 'My Equipments', placeholder: 'Find equipment (e.g. Oven)...' },
+  allergies: { title: 'My Allergies', placeholder: 'Find an allergen (e.g. Peanuts)...' },
+};
 
 // Images are served locally by the backend; image_path is relative, e.g. "images/x.jpg".
 const imageUrl = (path: string | null) =>
@@ -48,12 +74,16 @@ const tagIds = (states: Record<string, TriState>, kind: 'c' | 'i', state: TriSta
     .filter(([key, st]) => st === state && key.startsWith(`${kind}:`))
     .map(([key]) => Number(key.slice(2)));
 
-function mapApiSearchItemToRecipe(item: RecipeSearchItem): Recipe {
+// Search results carry the inventory fit; bookmarks/visited only the recipe summary.
+function mapApiSearchItemToRecipe(
+  item: RecipeSummary & Partial<Pick<RecipeSearchItem, 'missing_count' | 'allergen_optional'>>
+): Recipe {
   return {
     id: String(item.recipe_id),
     title: item.recipe_name,
     image: imageUrl(item.image_path),
     totalTimeMinutes: item.cook_time_min ?? 15,
+    serving: item.serving,
     tags: [],
     ingredients: [],
     equipment: [],
@@ -61,6 +91,8 @@ function mapApiSearchItemToRecipe(item: RecipeSearchItem): Recipe {
     allergens: [],
     instructions: [],
     tip: undefined,
+    missingCount: item.missing_count,
+    allergenOptional: item.allergen_optional,
   };
 }
 
@@ -72,8 +104,10 @@ function mergeDetailIntoRecipe(base: Recipe, detail: RecipeDetailResponse): Reci
   const apiIngredients = (detail.ingredients ?? []).map((ing) => ({
     name: ing.ingredient_name,
     category: ing.category_name,
-    amount: ing.quantity_text || (ing.is_optional ? 'Optional' : 'As needed'),
+    amount: ing.quantity_text || 'As needed',
     tag: ing.category_name.toLowerCase(),
+    optional: ing.is_optional,
+    owned: ing.owned,
   }));
 
   const apiEquipment = (detail.equipment ?? []).map((eq) => eq.equipment_name);
@@ -88,6 +122,7 @@ function mergeDetailIntoRecipe(base: Recipe, detail: RecipeDetailResponse): Reci
     title: detail.recipe_name,
     image: imageUrl(detail.image_path),
     totalTimeMinutes: detail.cook_time_min ?? base.totalTimeMinutes,
+    serving: detail.serving,
     tags: derivedTags,
     ingredients: apiIngredients,
     equipment: apiEquipment,
@@ -99,25 +134,35 @@ function mergeDetailIntoRecipe(base: Recipe, detail: RecipeDetailResponse): Reci
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [inventoryMode, setInventoryMode] = useState<'ingredients' | 'equipments' | null>(null);
+  const [inventoryMode, setInventoryMode] = useState<InventoryKind | null>(null);
   const [bookmarkOnlyView, setBookmarkOnlyView] = useState(false);
 
   const [tagsPanelOpen, setTagsPanelOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [tagSearchQuery, setTagSearchQuery] = useState('');
 
-  const [userIngredients, setUserIngredients] = useState<string[]>([]);
-  const [userEquipment, setUserEquipment] = useState<string[]>([]);
+  // Inventory lives in Postgres; inventoryVersion re-runs the search after a change.
+  const [inventory, setInventory] = useState<Record<InventoryKind, InventoryItem[]>>({
+    ingredients: [],
+    equipment: [],
+    allergies: [],
+  });
+  const [inventoryMessage, setInventoryMessage] = useState<string | null>(null);
+  const [inventoryVersion, setInventoryVersion] = useState(0);
 
-  const [bookmarks, setBookmarks] = useState<string[]>([]);
+  // Bookmarks, history and activity live in Mongo.
+  const [bookmarkItems, setBookmarkItems] = useState<Recipe[]>([]);
   const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>([]);
-  const [visitedRecipes, setVisitedRecipes] = useState<Recipe[]>([]);
+  const [visitedRecipes, setVisitedRecipes] = useState<VisitedItem[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const bookmarks = bookmarkItems.map((r) => r.id);
 
   // Backend catalog & search state
   const [catalogPreferences, setCatalogPreferences] = useState<CatalogPreference[]>([]);
   const [catalogCategories, setCatalogCategories] = useState<CatalogCategory[]>([]);
   const [catalogIngredients, setCatalogIngredients] = useState<CatalogIngredient[]>([]);
+  const [catalogEquipment, setCatalogEquipment] = useState<CatalogEquipment[]>([]);
   const [prefStatesById, setPrefStatesById] = useState<Record<number, PrefState>>({});
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
@@ -126,34 +171,55 @@ export default function App() {
   // Include/Exclude tags: 1 click -> green | 2 click -> red | 3 click -> cancel
   const [tagStates, setTagStates] = useState<Record<string, TriState>>({});
 
+  const loadInventory = (kind: InventoryKind) =>
+    orderUpApi.getInventory(kind).then((items) => setInventory((prev) => ({ ...prev, [kind]: items })));
+
+  const loadBookmarks = () =>
+    orderUpApi.getBookmarks().then((items) => setBookmarkItems(items.map(mapApiSearchItemToRecipe)));
+
+  const loadHistory = () =>
+    Promise.all([orderUpApi.getSearchHistory(), orderUpApi.getVisited(), orderUpApi.getAuditLogs()]).then(
+      ([searches, visited, logs]) => {
+        setSearchHistory(
+          searches.map((s) => ({
+            id: s._id,
+            query: s.name,
+            timestamp: new Date(s.searched_at).toLocaleString(),
+          }))
+        );
+        setVisitedRecipes(
+          visited.map((v) => ({
+            id: v._id,
+            recipe: mapApiSearchItemToRecipe(v),
+            timestamp: new Date(v.visited_at).toLocaleString(),
+          }))
+        );
+        setAuditLogs(logs);
+      }
+    );
+
   useEffect(() => {
-    (async () => {
-      const [b, sh, vr, ing, eq] = await Promise.all([
-        AsyncStorage.getItem('@orderup_bookmarks'),
-        AsyncStorage.getItem('@orderup_search_history'),
-        AsyncStorage.getItem('@orderup_visited'),
-        AsyncStorage.getItem('@orderup_ingredients'),
-        AsyncStorage.getItem('@orderup_equipment'),
-      ]);
-      if (b) setBookmarks(JSON.parse(b));
-      if (sh) setSearchHistory(JSON.parse(sh));
-      if (vr) setVisitedRecipes(JSON.parse(vr));
-      if (ing) setUserIngredients(JSON.parse(ing));
-      if (eq) setUserEquipment(JSON.parse(eq));
-    })();
+    Promise.all([
+      loadInventory('ingredients'),
+      loadInventory('equipment'),
+      loadInventory('allergies'),
+      loadBookmarks(),
+    ]).catch(() => setApiError("Couldn't load your kitchen. Please try again."));
   }, []);
 
-  // Load preference chips and tag chips (categories + ingredients) from /catalog
+  // Load preference chips, tag chips (categories + ingredients) and equipment from /catalog
   useEffect(() => {
     Promise.all([
       orderUpApi.getPreferences(),
       orderUpApi.getCategories(),
       orderUpApi.getIngredients(),
+      orderUpApi.getEquipment(),
     ])
-      .then(([prefs, categories, ingredients]) => {
+      .then(([prefs, categories, ingredients, equipment]) => {
         setCatalogPreferences(prefs);
         setCatalogCategories(categories);
         setCatalogIngredients(ingredients);
+        setCatalogEquipment(equipment);
         setApiError(null);
       })
       .catch(() => {
@@ -204,7 +270,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [searchPayload]);
+  }, [searchPayload, inventoryVersion]);
 
   const cyclePref = (prefId: number) => {
     setPrefStatesById((prev) => {
@@ -223,66 +289,62 @@ export default function App() {
     });
   };
 
-  const commitSearchHistory = async (text: string) => {
-    // Submitted searches are logged to Mongo search_history by the backend.
+  // Submitted searches are logged to Mongo search_history by the backend.
+  const submitSearch = () => {
     orderUpApi.searchRecipes({ ...searchPayload, log: true }).catch(() => {});
-
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    const entry: HistoryEntry = {
-      id: `${Date.now()}`,
-      query: trimmed,
-      timestamp: 'Just now',
-    };
-    const updated = [entry, ...searchHistory.filter((x) => x.query !== trimmed)].slice(0, 20);
-    setSearchHistory(updated);
-    await AsyncStorage.setItem('@orderup_search_history', JSON.stringify(updated));
   };
 
   const toggleBookmark = async (recipeId: string) => {
-    const updated = bookmarks.includes(recipeId)
-      ? bookmarks.filter((id) => id !== recipeId)
-      : [...bookmarks, recipeId];
-    setBookmarks(updated);
-    await AsyncStorage.setItem('@orderup_bookmarks', JSON.stringify(updated));
+    const id = Number(recipeId);
+    try {
+      if (bookmarks.includes(recipeId)) await orderUpApi.deleteBookmark(id);
+      else await orderUpApi.addBookmark(id);
+    } catch {
+      setApiError("Couldn't update your bookmarks. Please try again.");
+    }
+    loadBookmarks().catch(() => {});
   };
 
+  // Opening a recipe also logs the visit (done by the backend).
   const openRecipe = async (recipe: Recipe) => {
     setSelectedRecipe(recipe);
-
-    const numericId = Number(recipe.id);
-    let finalRecipe = recipe;
-    if (!Number.isNaN(numericId)) {
-      try {
-        const detail = await orderUpApi.getRecipeDetail(numericId);
-        finalRecipe = mergeDetailIntoRecipe(recipe, detail);
-        setSelectedRecipe(finalRecipe);
-      } catch (err) {
-        setApiError(
-          err instanceof Error && err.message === '20'
-            ? 'This recipe no longer exists.'
-            : "Couldn't load this recipe. Please try again."
-        );
-      }
+    try {
+      const detail = await orderUpApi.getRecipeDetail(Number(recipe.id));
+      setSelectedRecipe(mergeDetailIntoRecipe(recipe, detail));
+    } catch (err) {
+      setApiError(
+        err instanceof Error && err.message === '20'
+          ? 'This recipe no longer exists.'
+          : "Couldn't load this recipe. Please try again."
+      );
     }
-
-    const updated = [
-      finalRecipe,
-      ...visitedRecipes.filter((r) => r.id !== finalRecipe.id),
-    ].slice(0, 20);
-    setVisitedRecipes(updated);
-    await AsyncStorage.setItem('@orderup_visited', JSON.stringify(updated));
   };
 
-  const updateIngredientsList = async (next: string[]) => {
-    setUserIngredients(next);
-    await AsyncStorage.setItem('@orderup_ingredients', JSON.stringify(next));
+  const changeInventory = async (kind: InventoryKind, change: Promise<unknown>) => {
+    try {
+      await change;
+      setInventoryMessage(null);
+    } catch (err) {
+      const code = err instanceof Error ? err.message : '';
+      setInventoryMessage(
+        code === '12'
+          ? "That's already on your list."
+          : code === '20'
+          ? 'That item was already removed.'
+          : "Couldn't save the change, so nothing was changed. Please try again."
+      );
+    }
+    await loadInventory(kind).catch(() => {});
+    setInventoryVersion((v) => v + 1);
   };
 
-  const updateEquipmentList = async (next: string[]) => {
-    setUserEquipment(next);
-    await AsyncStorage.setItem('@orderup_equipment', JSON.stringify(next));
+  const openHistory = () => {
+    setHistoryOpen(true);
+    loadHistory().catch(() => setApiError("Couldn't load your history. Please try again."));
   };
+
+  const ingredientOptions = catalogIngredients.map((i) => ({ id: i.ingredient_id, name: i.ingredient_name }));
+  const equipmentOptions = catalogEquipment.map((e) => ({ id: e.equipment_id, name: e.equipment_name }));
 
   const filteredTags = useMemo(() => {
     const all: TagOption[] = [
@@ -299,11 +361,37 @@ export default function App() {
     [tagStates]
   );
 
-  // Tag filtering happens in the backend search; only the bookmark view filters here.
-  const displayedRecipes = useMemo(
-    () => (bookmarkOnlyView ? recipes.filter((r) => bookmarks.includes(r.id)) : recipes),
-    [recipes, bookmarkOnlyView, bookmarks]
-  );
+  // Filtering happens in the backend search; the bookmark view shows all bookmarks.
+  const displayedRecipes = bookmarkOnlyView ? bookmarkItems : recipes;
+
+  // Layout: the grid uses as many columns as fit, so cards and images stay a sensible size.
+  // The tag panel slides over the grid, so opening it never resizes the cards.
+  // Wide screens: no backdrop, cards stay clickable. Narrow screens: dimmed backdrop.
+  const { width } = useWindowDimensions();
+  const wideScreen = width >= 1000;
+  const panelWidth = Math.min(TAG_PANEL_WIDTH, width);
+  const gridWidth = Math.min(width, MAX_CONTENT_WIDTH);
+  const columns = gridWidth >= 1400 ? 4 : gridWidth >= 1000 ? 3 : gridWidth >= 560 ? 2 : 1;
+
+  // Ease the panel in/out; keep it mounted until the closing animation finishes.
+  const panelAnim = useRef(new Animated.Value(0)).current;
+  const [panelMounted, setPanelMounted] = useState(false);
+  useEffect(() => {
+    if (tagsPanelOpen) setPanelMounted(true);
+    Animated.timing(panelAnim, {
+      toValue: tagsPanelOpen ? 1 : 0,
+      duration: 250,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: false,
+    }).start(({ finished }) => {
+      if (finished && !tagsPanelOpen) setPanelMounted(false);
+    });
+  }, [tagsPanelOpen, panelAnim]);
+
+  const tagGroups = [
+    { title: 'Categories', items: filteredTags.filter((t) => t.key.startsWith('c:')) },
+    { title: 'Ingredients', items: filteredTags.filter((t) => t.key.startsWith('i:')) },
+  ];
 
   const getPrefStyle = (state: PrefState) => {
     if (state === 'green') return styles.chipGreen;
@@ -317,246 +405,301 @@ export default function App() {
     return styles.tagChipOff;
   };
 
+  // Right-side tag filter panel
+  const tagPanel = (
+    <View style={[styles.tagPanel, { width: panelWidth }]}>
+      <View style={styles.tagPanelHeader}>
+        <Text style={styles.tagPanelTitle}>Filter by ingredient</Text>
+        <TouchableOpacity onPress={() => setTagsPanelOpen(false)} style={styles.menuButton}>
+          <Ionicons name="close" size={24} color="#111827" />
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.tagPanelHint}>Tap once to include, twice to exclude, again to clear.</Text>
+
+      <View style={styles.tagSearchBox}>
+        <Ionicons name="search" size={18} color="#6B7280" />
+        <TextInput
+          value={tagSearchQuery}
+          onChangeText={setTagSearchQuery}
+          placeholder="Search e.g. Eggs, Dairy..."
+          style={styles.tagSearchInput}
+        />
+        {tagSearchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setTagSearchQuery('')}>
+            <Ionicons name="close-circle" size={18} color="#9CA3AF" />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {activeTagCount > 0 && (
+        <TouchableOpacity onPress={() => setTagStates({})} style={styles.clearTagsBtn}>
+          <Text style={styles.clearTagsText}>Clear all filters ({activeTagCount})</Text>
+        </TouchableOpacity>
+      )}
+
+      <ScrollView style={styles.tagPanelScroll}>
+        {tagGroups.map(
+          (group) =>
+            group.items.length > 0 && (
+              <View key={group.title} style={styles.tagGroup}>
+                <Text style={styles.tagGroupTitle}>{group.title}</Text>
+                <View style={styles.tagWrap}>
+                  {group.items.map((tag) => {
+                    const st = tagStates[tag.key] || 'neutral';
+                    return (
+                      <TouchableOpacity
+                        key={tag.key}
+                        onPress={() => cycleTag(tag.key)}
+                        style={[styles.tagChip, getTagStyle(st)]}
+                      >
+                        <Text style={[styles.tagChipText, st !== 'neutral' && styles.textWhite]}>
+                          {tag.label} {st === 'include' ? '+' : st === 'exclude' ? '−' : ''}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )
+        )}
+        {filteredTags.length === 0 && <Text style={styles.noTagsMatchText}>No matching tags</Text>}
+      </ScrollView>
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header + Searchbar */}
       <View style={styles.header}>
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuButton}>
-              <Ionicons name="menu" size={24} color="#111827" />
-            </TouchableOpacity>
-            <Text style={styles.appTitle}>Order up!</Text>
+        <View style={styles.headerInner}>
+          <View style={styles.headerRow}>
+            <View style={styles.headerLeft}>
+              <TouchableOpacity onPress={() => setSidebarOpen(true)} style={styles.menuButton}>
+                <Ionicons name="menu" size={28} color="#111827" />
+              </TouchableOpacity>
+              <Text style={styles.appTitle}>Order up!</Text>
+            </View>
+
+            <View style={styles.headerActions}>
+              {bookmarkOnlyView && (
+                <TouchableOpacity
+                  onPress={() => setBookmarkOnlyView(false)}
+                  style={styles.bookmarkPill}
+                >
+                  <Text style={styles.bookmarkPillText}>Bookmarks Only ✕</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* `hovered` is provided by react-native-web */}
+              <Pressable onPress={() => setTagsPanelOpen((prev) => !prev)}>
+                {(state) => {
+                  const hovered = (state as { hovered?: boolean }).hovered;
+                  const color = hovered ? '#1F2937' : '#FFFFFF';
+                  return (
+                    <View style={[styles.tagsToggleBtn, WEB_FADE, hovered && styles.tagsToggleBtnHover]}>
+                      <Ionicons name="options-outline" size={18} color={color} />
+                      <Text style={[styles.tagsToggleText, WEB_FADE, { color }]}>
+                        Tags{activeTagCount > 0 ? ` (${activeTagCount})` : ''}
+                      </Text>
+                    </View>
+                  );
+                }}
+              </Pressable>
+            </View>
           </View>
 
-          <View style={styles.headerActions}>
-            <TouchableOpacity
-              onPress={() => setTagsPanelOpen((prev) => !prev)}
-              style={styles.tagsToggleBtn}
-            >
-              <Ionicons name="pricetags-outline" size={14} color="#111827" />
-              <Text style={styles.tagsToggleText}>
-                Tags{activeTagCount > 0 ? ` (${activeTagCount})` : ''}
-              </Text>
-            </TouchableOpacity>
-
-            {bookmarkOnlyView && (
-              <TouchableOpacity
-                onPress={() => setBookmarkOnlyView(false)}
-                style={styles.bookmarkPill}
-              >
-                <Text style={styles.bookmarkPillText}>Bookmarks Only ✕</Text>
+          {/* Primary Search Box */}
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={20} color="#6B7280" />
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onSubmitEditing={submitSearch}
+              placeholder="Search recipe by name..."
+              style={styles.searchInput}
+              returnKeyType="search"
+            />
+            {loadingRecipes && <ActivityIndicator size="small" color="#111827" />}
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={20} color="#9CA3AF" />
               </TouchableOpacity>
             )}
           </View>
+
+          {apiError && <Text style={styles.errorText}>{apiError}</Text>}
+
+          {/* Preferences from DB: 1 click -> green | 2 click -> red | 3 click -> off */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.prefScroll}
+          >
+            {catalogPreferences.map((pref) => {
+              const st = prefStatesById[pref.preference_id] || 'off';
+              return (
+                <TouchableOpacity
+                  key={pref.preference_id}
+                  onPress={() => cyclePref(pref.preference_id)}
+                  style={[styles.prefChip, getPrefStyle(st)]}
+                >
+                  <Text style={[styles.prefChipText, st !== 'off' && styles.textWhite]}>
+                    {pref.preference_name} {st === 'green' ? '✓' : st === 'red' ? '✕' : ''}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
+      </View>
 
-        {/* Primary Search Box */}
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => setTagsPanelOpen(true)}
-          style={styles.searchBox}
-        >
-          <Ionicons name="search" size={18} color="#6B7280" />
-          <TextInput
-            value={searchQuery}
-            onFocus={() => setTagsPanelOpen(true)}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={() => commitSearchHistory(searchQuery)}
-            placeholder="Search recipe by name..."
-            style={styles.searchInput}
-            returnKeyType="search"
-          />
-          {loadingRecipes && <ActivityIndicator size="small" color="#111827" />}
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="#9CA3AF" />
-            </TouchableOpacity>
-          )}
-        </TouchableOpacity>
-
-        {apiError && <Text style={styles.errorText}>{apiError}</Text>}
-
-        {/* Preferences from DB: 1 click -> green | 2 click -> red | 3 click -> off */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.prefScroll}
-        >
-          {catalogPreferences.map((pref) => {
-            const st = prefStatesById[pref.preference_id] || 'off';
+      <View style={styles.body}>
+        {/* Homepage Recipe Grid */}
+        <FlatList
+          key={`grid-${columns}`}
+          data={displayedRecipes}
+          keyExtractor={(item) => item.id}
+          numColumns={columns}
+          style={styles.grid}
+          contentContainerStyle={styles.gridContent}
+          renderItem={({ item }) => {
+            const isSaved = bookmarks.includes(item.id);
             return (
-              <TouchableOpacity
-                key={pref.preference_id}
-                onPress={() => cyclePref(pref.preference_id)}
-                style={[styles.prefChip, getPrefStyle(st)]}
-              >
-                <Text style={[styles.prefChipText, st !== 'off' && styles.textWhite]}>
-                  {pref.preference_name} {st === 'green' ? '✓' : st === 'red' ? '✕' : ''}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-
-        {/* Expandable Tags Section */}
-        {tagsPanelOpen && (
-          <View style={styles.tagSection}>
-            <View style={styles.tagSearchRow}>
-              <View style={styles.tagSearchBox}>
-                <Ionicons name="pricetag-outline" size={16} color="#6B7280" />
-                <TextInput
-                  value={tagSearchQuery}
-                  onChangeText={setTagSearchQuery}
-                  placeholder="Search ingredients or categories (e.g. Eggs, Dairy)..."
-                  style={styles.tagSearchInput}
-                />
-                {tagSearchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setTagSearchQuery('')}>
-                    <Ionicons name="close-circle" size={16} color="#9CA3AF" />
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <TouchableOpacity
-                onPress={() => setTagsPanelOpen(false)}
-                style={styles.hideTagsBtn}
-              >
-                <Text style={styles.hideTagsText}>Done</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.tagScroll}
-            >
-              {filteredTags.map((tag) => {
-                const st = tagStates[tag.key] || 'neutral';
-                return (
-                  <TouchableOpacity
-                    key={tag.key}
-                    onPress={() => cycleTag(tag.key)}
-                    style={[styles.tagChip, getTagStyle(st)]}
-                  >
-                    <Text style={[styles.tagChipText, st !== 'neutral' && styles.textWhite]}>
-                      #{tag.label} {st === 'include' ? '+' : st === 'exclude' ? '−' : ''}
+              <View style={{ width: `${100 / columns}%`, padding: 8 }}>
+                <TouchableOpacity onPress={() => openRecipe(item)} style={styles.card}>
+                  <Image source={{ uri: item.image }} style={styles.cardImage} />
+                  <View style={styles.cardBody}>
+                    <Text numberOfLines={2} style={styles.cardTitle}>
+                      {item.title}
                     </Text>
-                  </TouchableOpacity>
-                );
-              })}
-              {filteredTags.length === 0 && (
-                <Text style={styles.noTagsMatchText}>No matching tags</Text>
-              )}
-            </ScrollView>
+                    {item.missingCount !== undefined && (
+                      <Text
+                        style={[
+                          styles.cardFitText,
+                          item.missingCount === 0 ? styles.cardFitGood : styles.cardFitMissing,
+                        ]}
+                      >
+                        {item.missingCount === 0
+                          ? '✓ You have everything'
+                          : `Missing ${item.missingCount} ingredient${item.missingCount > 1 ? 's' : ''}`}
+                      </Text>
+                    )}
+                    {item.allergenOptional && (
+                      <Text style={styles.cardAllergenText}>⚠ Has an optional allergen, leave it out</Text>
+                    )}
+
+                    <View style={styles.cardFooter}>
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          toggleBookmark(item.id);
+                        }}
+                        style={styles.heartButton}
+                      >
+                        <Ionicons
+                          name={isSaved ? 'heart' : 'heart-outline'}
+                          size={22}
+                          color={isSaved ? '#EF4444' : '#4B5563'}
+                        />
+                      </TouchableOpacity>
+
+                      <View style={styles.timeRow}>
+                        <Ionicons name="time-outline" size={18} color="#6B7280" />
+                        <Text style={styles.timeText}>{item.totalTimeMinutes} min</Text>
+                      </View>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </View>
+            );
+          }}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>
+              {loadingRecipes ? 'Loading recipes...' : 'No recipes match your filters.'}
+            </Text>
+          }
+        />
+
+        {/* Tag panel slides over the grid from the right */}
+        {panelMounted && (
+          <View style={styles.tagOverlay} pointerEvents="box-none">
+            {!wideScreen && (
+              <Animated.View style={[styles.tagOverlayBackdrop, { opacity: panelAnim }]}>
+                <Pressable style={styles.fill} onPress={() => setTagsPanelOpen(false)} />
+              </Animated.View>
+            )}
+            <Animated.View
+              style={[
+                styles.tagPanelSlide,
+                {
+                  transform: [
+                    {
+                      translateX: panelAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [panelWidth, 0],
+                      }),
+                    },
+                  ],
+                },
+              ]}
+            >
+              {tagPanel}
+            </Animated.View>
           </View>
         )}
       </View>
-
-      {/* Homepage Recipe Grid */}
-      <FlatList
-        data={displayedRecipes}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        contentContainerStyle={{ padding: 10 }}
-        renderItem={({ item }) => {
-          const isSaved = bookmarks.includes(item.id);
-          return (
-            <TouchableOpacity onPress={() => openRecipe(item)} style={styles.card}>
-              <Image source={{ uri: item.image }} style={styles.cardImage} />
-              <View style={styles.cardBody}>
-                <Text numberOfLines={2} style={styles.cardTitle}>
-                  {item.title}
-                </Text>
-
-                <View style={styles.cardFooter}>
-                  <TouchableOpacity
-                    onPress={(e) => {
-                      e.stopPropagation();
-                      toggleBookmark(item.id);
-                    }}
-                    style={styles.heartButton}
-                  >
-                    <Ionicons
-                      name={isSaved ? 'heart' : 'heart-outline'}
-                      size={17}
-                      color={isSaved ? '#EF4444' : '#4B5563'}
-                    />
-                  </TouchableOpacity>
-
-                  <View style={styles.timeRow}>
-                    <Ionicons name="time-outline" size={14} color="#6B7280" />
-                    <Text style={styles.timeText}>{item.totalTimeMinutes}m</Text>
-                  </View>
-                </View>
-              </View>
-            </TouchableOpacity>
-          );
-        }}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>
-            {loadingRecipes
-              ? 'Loading recipes from backend...'
-              : 'No recipes returned from backend.'}
-          </Text>
-        }
-      />
 
       {/* Sidebar */}
       <SidebarDrawer
         visible={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         bookmarkCount={bookmarks.length}
-        ingredientCount={userIngredients.length}
-        equipmentCount={userEquipment.length}
+        ingredientCount={inventory.ingredients.length}
+        equipmentCount={inventory.equipment.length}
+        allergyCount={inventory.allergies.length}
         onSelectSection={(sec) => {
           if (sec === 'ingredients') setInventoryMode('ingredients');
-          if (sec === 'equipments') setInventoryMode('equipments');
+          if (sec === 'equipments') setInventoryMode('equipment');
+          if (sec === 'allergies') setInventoryMode('allergies');
           if (sec === 'bookmark') setBookmarkOnlyView((prev) => !prev);
-          if (sec === 'history') setHistoryOpen(true);
+          if (sec === 'history') openHistory();
         }}
       />
 
-      {/* Ingredients CRUD */}
-      <InventoryModal
-        visible={inventoryMode === 'ingredients'}
-        onClose={() => setInventoryMode(null)}
-        title="My Ingredients"
-        placeholder="Add ingredient (e.g. Milk, Tomatoes)..."
-        items={userIngredients}
-        onAdd={(val) => updateIngredientsList([...userIngredients, val])}
-        onUpdate={(idx, val) =>
-          updateIngredientsList(userIngredients.map((item, i) => (i === idx ? val : item)))
-        }
-        onDelete={(idx) =>
-          updateIngredientsList(userIngredients.filter((_, i) => i !== idx))
-        }
-      />
+      {/* Ingredients / Equipments / Allergies CRUD (Postgres + audit log) */}
+      {inventoryMode && (
+        <InventoryModal
+          visible
+          onClose={() => {
+            setInventoryMode(null);
+            setInventoryMessage(null);
+          }}
+          title={INVENTORY_TEXT[inventoryMode].title}
+          placeholder={INVENTORY_TEXT[inventoryMode].placeholder}
+          items={inventory[inventoryMode]}
+          options={inventoryMode === 'equipment' ? equipmentOptions : ingredientOptions}
+          message={inventoryMessage}
+          onAdd={(id) => changeInventory(inventoryMode, orderUpApi.addInventory(inventoryMode, id))}
+          onUpdate={(oldId, newId) =>
+            changeInventory(inventoryMode, orderUpApi.updateInventory(inventoryMode, oldId, newId))
+          }
+          onDelete={(id) => changeInventory(inventoryMode, orderUpApi.deleteInventory(inventoryMode, id))}
+        />
+      )}
 
-      {/* Equipments CRUD */}
-      <InventoryModal
-        visible={inventoryMode === 'equipments'}
-        onClose={() => setInventoryMode(null)}
-        title="My Equipments"
-        placeholder="Add equipment (e.g. Oven, Blender)..."
-        items={userEquipment}
-        onAdd={(val) => updateEquipmentList([...userEquipment, val])}
-        onUpdate={(idx, val) =>
-          updateEquipmentList(userEquipment.map((item, i) => (i === idx ? val : item)))
-        }
-        onDelete={(idx) =>
-          updateEquipmentList(userEquipment.filter((_, i) => i !== idx))
-        }
-      />
-
-      {/* History Popup */}
+      {/* History Popup (Mongo) */}
       <HistoryModal
         visible={historyOpen}
         onClose={() => setHistoryOpen(false)}
         searchHistory={searchHistory}
         visitedRecipes={visitedRecipes}
+        auditLogs={auditLogs}
         onSelectSearchQuery={(q) => setSearchQuery(q)}
         onSelectRecipe={(r) => openRecipe(r)}
+        onDeleteEntry={(kind, id) =>
+          orderUpApi.deleteHistoryEntry(kind, id).catch(() => {}).then(loadHistory)
+        }
+        onClear={(kind) => orderUpApi.clearHistory(kind).catch(() => {}).then(loadHistory)}
       />
 
       {/* Recipe Page */}
@@ -575,162 +718,179 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: '#E5E7EB',
   },
+  headerInner: { width: '100%', maxWidth: MAX_CONTENT_WIDTH, alignSelf: 'center' },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: 14,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   menuButton: { padding: 4 },
-  appTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  appTitle: { fontSize: 26, fontWeight: '800', color: '#111827' },
 
   tagsToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#4A4466',
   },
-  tagsToggleText: { fontSize: 12, fontWeight: '700', color: '#111827' },
+  tagsToggleBtnHover: { backgroundColor: '#9FCBAD' },
+  tagsToggleText: { fontSize: 16, fontWeight: '700' },
 
   bookmarkPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderRadius: 999,
     backgroundColor: '#FFF1F2',
     borderWidth: 1,
     borderColor: '#FECDD3',
   },
-  bookmarkPillText: { fontSize: 12, fontWeight: '700', color: '#E11D48' },
+  bookmarkPillText: { fontSize: 15, fontWeight: '700', color: '#E11D48' },
 
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 6,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 10,
   },
-  searchInput: { flex: 1, fontSize: 14, color: '#111827' },
-  errorText: { fontSize: 12, color: '#E11D48', marginTop: 6 },
+  searchInput: { flex: 1, fontSize: 17, color: '#111827' },
+  errorText: { fontSize: 15, color: '#E11D48', marginTop: 8 },
 
-  prefScroll: { marginTop: 10 },
+  prefScroll: { marginTop: 12 },
   prefChip: {
-    marginRight: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    marginRight: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 999,
     borderWidth: 1,
   },
-  prefChipOff: { backgroundColor: '#FFFFFF', borderColor: '#E5E7EB' },
-  prefChipText: { fontSize: 12, fontWeight: '600', color: '#374151' },
-
-  tagSection: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
-  },
-  tagSearchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  tagSearchBox: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  tagSearchInput: {
-    flex: 1,
-    marginLeft: 6,
-    fontSize: 13,
-    color: '#111827',
-  },
-  hideTagsBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    backgroundColor: '#111827',
-  },
-  hideTagsText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  tagScroll: { marginTop: 8, paddingBottom: 4 },
-  tagChip: {
-    marginRight: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  tagChipOff: { backgroundColor: '#F3F4F6', borderColor: '#E5E7EB' },
-  tagChipText: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#374151',
-    textTransform: 'capitalize',
-  },
-  noTagsMatchText: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    paddingVertical: 4,
-  },
+  prefChipOff: { backgroundColor: '#FFFFFF', borderColor: '#D1D5DB' },
+  prefChipText: { fontSize: 15, fontWeight: '600', color: '#374151' },
 
   chipGreen: { backgroundColor: '#059669', borderColor: '#059669' },
   chipRed: { backgroundColor: '#E11D48', borderColor: '#E11D48' },
   textWhite: { color: '#FFFFFF' },
 
+  // Grid + tag panel side by side
+  body: { flex: 1, flexDirection: 'row' },
+  grid: { flex: 1 },
+  gridContent: {
+    width: '100%',
+    maxWidth: MAX_CONTENT_WIDTH,
+    alignSelf: 'center',
+    padding: 12,
+  },
+
   card: {
-    flex: 1,
-    margin: 6,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: '#F3F4F6',
+    borderColor: '#E5E7EB',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
   },
-  cardImage: { width: '100%', height: 144, backgroundColor: '#E5E7EB' },
-  cardBody: { padding: 10 },
-  cardTitle: { fontSize: 14, fontWeight: '700', color: '#111827' },
+  cardImage: { width: '100%', height: 180, backgroundColor: '#E5E7EB' },
+  cardBody: { padding: 16 },
+  cardTitle: { fontSize: 19, fontWeight: '700', color: '#111827' },
+  cardFitText: { fontSize: 15, fontWeight: '600', marginTop: 6 },
+  cardFitGood: { color: '#047857' },
+  cardFitMissing: { color: '#B45309' },
+  cardAllergenText: { fontSize: 14, color: '#B45309', marginTop: 4 },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 10,
-    paddingTop: 8,
+    marginTop: 14,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
   },
   heartButton: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  timeText: { fontSize: 12, fontWeight: '600', color: '#4B5563' },
+  timeRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  timeText: { fontSize: 15, fontWeight: '600', color: '#4B5563' },
 
-  emptyText: { textAlign: 'center', color: '#9CA3AF', marginTop: 48 },
+  emptyText: { textAlign: 'center', color: '#6B7280', fontSize: 17, marginTop: 48 },
+
+  // Right-side tag panel
+  tagPanel: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderLeftWidth: 1,
+    borderLeftColor: '#E5E7EB',
+    padding: 20,
+    gap: 12,
+  },
+  tagPanelSlide: {
+    shadowColor: '#000',
+    shadowOffset: { width: -4, height: 0 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  fill: { flex: 1 },
+  tagPanelHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  tagPanelTitle: { fontSize: 20, fontWeight: '800', color: '#111827' },
+  tagPanelHint: { fontSize: 14, color: '#6B7280' },
+  tagSearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  tagSearchInput: { flex: 1, fontSize: 16, color: '#111827' },
+  clearTagsBtn: { alignSelf: 'flex-start' },
+  clearTagsText: { fontSize: 15, fontWeight: '700', color: '#E11D48' },
+  tagPanelScroll: { flex: 1 },
+  tagGroup: { marginBottom: 18 },
+  tagGroupTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1,
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  tagWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tagChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  tagChipOff: { backgroundColor: '#F9FAFB', borderColor: '#D1D5DB' },
+  tagChipText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  noTagsMatchText: { fontSize: 15, color: '#9CA3AF', paddingVertical: 8 },
+
+  // Overlay over the grid area; the panel is pinned to the right edge
+  tagOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  tagOverlayBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)' },
 });

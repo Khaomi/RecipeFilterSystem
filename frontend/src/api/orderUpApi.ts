@@ -45,6 +45,50 @@ export interface RecipeSearchItem {
   image_path: string | null;
   required_count: number;
   matched_count: number;
+  owned_count: number;
+  missing_count: number;
+  allergen_optional: boolean;
+}
+
+export type InventoryKind = 'ingredients' | 'equipment' | 'allergies';
+
+export interface InventoryItem {
+  id: number;
+  name: string;
+}
+
+export interface RecipeSummary {
+  recipe_id: number;
+  recipe_name: string;
+  cook_time_min: number | null;
+  serving: number | null;
+  image_path: string | null;
+}
+
+export interface BookmarkItem extends RecipeSummary {
+  bookmarked_at: string;
+}
+
+export interface VisitedEntry extends RecipeSummary {
+  _id: string;
+  visited_at: string;
+}
+
+export interface SearchHistoryEntry {
+  _id: string;
+  name: string;
+  filters: Record<string, number[]>;
+  available_ingredients: number[];
+  available_equipment: number[];
+  result_ids: number[];
+  searched_at: string;
+}
+
+export interface AuditLogEntry {
+  _id: string;
+  action: string; // e.g. "add_ingredient", "edit_equipment", "delete_allergy"
+  fields: { id?: number; name?: string; old_val?: string; new_val?: string };
+  logged_at: string;
 }
 
 export interface RecipeDetailResponse {
@@ -62,6 +106,7 @@ export interface RecipeDetailResponse {
     is_staple: boolean;
     quantity_text: string | null;
     is_optional: boolean;
+    owned: boolean; // in the user's inventory or a staple
   }[];
   equipment: {
     equipment_id: number;
@@ -91,6 +136,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return data as T;
 }
+
+const post = <T>(path: string, body: unknown) =>
+  requestJson<T>(path, { method: 'POST', body: JSON.stringify(body) });
 
 export const orderUpApi = {
   getIngredients: (q = '', categoryId?: number) => {
@@ -127,6 +175,29 @@ export const orderUpApi = {
       }),
     }),
 
+  // Also logs the visit to Mongo visited_recipes.
   getRecipeDetail: (recipeId: number) =>
     requestJson<RecipeDetailResponse>(`/recipes/${recipeId}`),
+
+  // Inventory (Postgres; every change also writes a Mongo audit log in one transaction)
+  getInventory: (kind: InventoryKind) => requestJson<InventoryItem[]>(`/inventory/${kind}`),
+  addInventory: (kind: InventoryKind, id: number) =>
+    post<InventoryItem>(`/inventory/${kind}/add`, { id }),
+  updateInventory: (kind: InventoryKind, oldId: number, newId: number) =>
+    post<InventoryItem>(`/inventory/${kind}/update`, { old_id: oldId, new_id: newId }),
+  deleteInventory: (kind: InventoryKind, id: number) =>
+    post<{ id: number }>(`/inventory/${kind}/delete`, { id }),
+
+  // Bookmarks (Mongo)
+  getBookmarks: () => requestJson<BookmarkItem[]>('/bookmarks'),
+  addBookmark: (recipeId: number) => post('/bookmarks/add', { recipe_id: recipeId }),
+  deleteBookmark: (recipeId: number) => post('/bookmarks/delete', { recipe_id: recipeId }),
+
+  // History + activity (Mongo)
+  getSearchHistory: () => requestJson<SearchHistoryEntry[]>('/history/searches'),
+  getVisited: () => requestJson<VisitedEntry[]>('/history/visited'),
+  getAuditLogs: () => requestJson<AuditLogEntry[]>('/history/audit'),
+  deleteHistoryEntry: (kind: 'searches' | 'visited', id: string) =>
+    post('/history/delete', { kind, id }),
+  clearHistory: (kind: 'searches' | 'visited') => post('/history/clear', { kind }),
 };

@@ -2,13 +2,16 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
+export type SidebarSection = 'ingredients' | 'equipments' | 'allergies' | 'bookmark' | 'history';
+
 interface Props {
   visible: boolean;
   onClose: () => void;
-  onSelectSection: (section: 'ingredients' | 'equipments' | 'bookmark' | 'history') => void;
+  onSelectSection: (section: SidebarSection) => void;
   bookmarkCount: number;
   ingredientCount: number;
   equipmentCount: number;
+  allergyCount: number;
 }
 
 export const SidebarDrawer: React.FC<Props> = ({
@@ -18,15 +21,17 @@ export const SidebarDrawer: React.FC<Props> = ({
   bookmarkCount,
   ingredientCount,
   equipmentCount,
+  allergyCount,
 }) => {
   const menuItems: {
-    key: 'ingredients' | 'equipments' | 'bookmark' | 'history';
+    key: SidebarSection;
     label: string;
     icon: keyof typeof Ionicons.glyphMap;
     badge?: string;
   }[] = [
     { key: 'ingredients', label: 'Ingredients', icon: 'nutrition-outline', badge: `${ingredientCount}` },
     { key: 'equipments', label: 'Equipments', icon: 'flame-outline', badge: `${equipmentCount}` },
+    { key: 'allergies', label: 'Allergies', icon: 'warning-outline', badge: `${allergyCount}` },
     { key: 'bookmark', label: 'Bookmark', icon: 'heart-outline', badge: `${bookmarkCount}` },
     { key: 'history', label: 'History', icon: 'time-outline' },
   ];
@@ -68,7 +73,7 @@ export const SidebarDrawer: React.FC<Props> = ({
             </View>
           </View>
 
-          <Text style={styles.footer}>Local Mode • Saved on Device</Text>
+          <Text style={styles.footer}>Local Mode</Text>
         </View>
         <Pressable style={styles.backdrop} onPress={onClose} />
       </View>
