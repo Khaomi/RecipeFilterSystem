@@ -9,28 +9,26 @@ import {
   ScrollView,
   Image,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  INITIAL_RECIPES,
-  PREFERENCES_LIST,
-  INITIAL_INGREDIENTS,
-  INITIAL_EQUIPMENT,
-  INITIAL_ALLERGIES,
-} from '../data/mockRecipes';
-import {
   Recipe,
-  DietaryPreference,
   PrefState,
   TriState,
   HistoryEntry,
-} from '../type/recipe';
-import { rankRecipes } from '../utils/ranking';
-import { SidebarDrawer } from '../components/SidebarDrawer';
-import { HistoryModal } from '../components/HistoryModal';
-import { InventoryModal } from '../components/InventoryModal';
-import { RecipeDetailModal } from '../Equipment/RecipeDetailModal';
+} from './type/recipe';
+import { SidebarDrawer } from './components/SidebarDrawer';
+import { HistoryModal } from './components/HistoryModal';
+import { InventoryModal } from './components/InventoryModal';
+import { RecipeDetailModal } from './Equipment/RecipeDetailModal';
+import {
+  orderUpApi,
+  CatalogPreference,
+  RecipeSearchItem,
+  RecipeDetailResponse,
+} from './api/orderUpApi';
 
 const ALL_TAGS = [
   'breakfast',
@@ -47,38 +45,83 @@ const ALL_TAGS = [
   'low-calorie',
 ];
 
+function mapApiSearchItemToRecipe(item: RecipeSearchItem): Recipe {
+  return {
+    id: String(item.recipe_id),
+    title: item.recipe_name,
+    image:
+      item.image_path ||
+      'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800',
+    totalTimeMinutes: item.cook_time_min ?? 15,
+    tags: [],
+    ingredients: [],
+    equipment: [],
+    preferencesSupported: [],
+    allergens: [],
+    instructions: [],
+    tip: undefined,
+  };
+}
+
+function mergeDetailIntoRecipe(base: Recipe, detail: RecipeDetailResponse): Recipe {
+  const apiInstructions = Array.isArray(detail.details?.instructions)
+    ? (detail.details.instructions as string[])
+    : [];
+
+  const apiTip =
+    typeof detail.details?.tip === 'string' ? detail.details.tip : undefined;
+
+  const apiIngredients = (detail.ingredients ?? []).map((ing) => ({
+    name: ing.ingredient_name,
+    category: ing.category_name,
+    amount: ing.quantity_text || (ing.is_optional ? 'Optional' : 'As needed'),
+    tag: ing.category_name.toLowerCase(),
+  }));
+
+  const apiEquipment = (detail.equipment ?? []).map((eq) => eq.equipment_name);
+
+  const derivedTags = Array.from(
+    new Set(apiIngredients.map((i) => i.tag).filter(Boolean))
+  );
+
+  return {
+    ...base,
+    id: String(detail.recipe_id),
+    title: detail.recipe_name,
+    image: detail.image_path || base.image,
+    totalTimeMinutes: detail.cook_time_min ?? base.totalTimeMinutes,
+    tags: derivedTags,
+    ingredients: apiIngredients,
+    equipment: apiEquipment,
+    instructions: apiInstructions,
+    tip: apiTip,
+  };
+}
+
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [inventoryMode, setInventoryMode] = useState<'ingredients' | 'equipments' | null>(null);
   const [bookmarkOnlyView, setBookmarkOnlyView] = useState(false);
 
-  // Shows tag panel when tapping/focusing the search bar
   const [tagsPanelOpen, setTagsPanelOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [tagSearchQuery, setTagSearchQuery] = useState('');
 
-  const [userIngredients, setUserIngredients] = useState<string[]>(INITIAL_INGREDIENTS);
-  const [userEquipment, setUserEquipment] = useState<string[]>(INITIAL_EQUIPMENT);
-  const [userAllergies] = useState<string[]>(INITIAL_ALLERGIES);
+  const [userIngredients, setUserIngredients] = useState<string[]>([]);
+  const [userEquipment, setUserEquipment] = useState<string[]>([]);
 
   const [bookmarks, setBookmarks] = useState<string[]>([]);
   const [searchHistory, setSearchHistory] = useState<HistoryEntry[]>([]);
   const [visitedRecipes, setVisitedRecipes] = useState<Recipe[]>([]);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
 
-  // Preference: 1 click -> green | 2 click -> red (3rd click resets to off)
-  const [prefStates, setPrefStates] = useState<Record<DietaryPreference, PrefState>>({
-    'Lactose intolerance': 'off',
-    'Gluten intolerance': 'off',
-    Vegetarianism: 'off',
-    Veganism: 'off',
-    Kosher: 'off',
-    Keto: 'off',
-    Diabetes: 'off',
-    'Dairy-free': 'off',
-    'Low carb': 'off',
-  });
+  // Backend catalog & search state
+  const [catalogPreferences, setCatalogPreferences] = useState<CatalogPreference[]>([]);
+  const [prefStatesById, setPrefStatesById] = useState<Record<number, PrefState>>({});
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [loadingRecipes, setLoadingRecipes] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   // Include/Exclude tags: 1 click -> green | 2 click -> red | 3 click -> cancel
   const [tagStates, setTagStates] = useState<Record<string, TriState>>({});
@@ -100,11 +143,64 @@ export default function App() {
     })();
   }, []);
 
-  const cyclePref = (pref: DietaryPreference) => {
-    setPrefStates((prev) => {
-      const current = prev[pref];
+  // Load preferences directly from FastAPI /catalog/preferences
+  useEffect(() => {
+    orderUpApi
+      .getPreferences()
+      .then((prefs) => {
+        setCatalogPreferences(prefs);
+        setApiError(null);
+      })
+      .catch((err: Error) => {
+        setApiError(err.message || 'Failed to load preferences from backend');
+      });
+  }, []);
+
+  // Query FastAPI POST /recipes/search
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingRecipes(true);
+    setApiError(null);
+
+    const include_preferences = Object.entries(prefStatesById)
+      .filter(([, st]) => st === 'green')
+      .map(([id]) => Number(id));
+
+    const exclude_preferences = Object.entries(prefStatesById)
+      .filter(([, st]) => st === 'red')
+      .map(([id]) => Number(id));
+
+    orderUpApi
+      .searchRecipes({
+        name: searchQuery.trim(),
+        include_preferences,
+        exclude_preferences,
+        limit: 20,
+        offset: 0,
+      })
+      .then((rows) => {
+        if (cancelled) return;
+        setRecipes(rows.map(mapApiSearchItemToRecipe));
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setRecipes([]);
+        setApiError(err.message || 'Failed to fetch recipes from backend');
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingRecipes(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchQuery, prefStatesById]);
+
+  const cyclePref = (prefId: number) => {
+    setPrefStatesById((prev) => {
+      const current = prev[prefId] || 'off';
       const next: PrefState = current === 'off' ? 'green' : current === 'green' ? 'red' : 'off';
-      return { ...prev, [pref]: next };
+      return { ...prev, [prefId]: next };
     });
   };
 
@@ -140,7 +236,23 @@ export default function App() {
 
   const openRecipe = async (recipe: Recipe) => {
     setSelectedRecipe(recipe);
-    const updated = [recipe, ...visitedRecipes.filter((r) => r.id !== recipe.id)].slice(0, 20);
+
+    const numericId = Number(recipe.id);
+    let finalRecipe = recipe;
+    if (!Number.isNaN(numericId)) {
+      try {
+        const detail = await orderUpApi.getRecipeDetail(numericId);
+        finalRecipe = mergeDetailIntoRecipe(recipe, detail);
+        setSelectedRecipe(finalRecipe);
+      } catch (err) {
+        setApiError(err instanceof Error ? err.message : 'Failed to load recipe detail');
+      }
+    }
+
+    const updated = [
+      finalRecipe,
+      ...visitedRecipes.filter((r) => r.id !== finalRecipe.id),
+    ].slice(0, 20);
     setVisitedRecipes(updated);
     await AsyncStorage.setItem('@orderup_visited', JSON.stringify(updated));
   };
@@ -167,25 +279,23 @@ export default function App() {
   );
 
   const displayedRecipes = useMemo(() => {
-    const ranked = rankRecipes(INITIAL_RECIPES, {
-      searchQuery,
-      userIngredients,
-      userEquipment,
-      userAllergies,
-      prefStates,
-      tagStates,
+    const includedTags = Object.entries(tagStates)
+      .filter(([, st]) => st === 'include')
+      .map(([t]) => t.toLowerCase());
+    const excludedTags = Object.entries(tagStates)
+      .filter(([, st]) => st === 'exclude')
+      .map(([t]) => t.toLowerCase());
+
+    const filtered = recipes.filter((r) => {
+      if (bookmarkOnlyView && !bookmarks.includes(r.id)) return false;
+      const rTags = r.tags.map((t) => t.toLowerCase());
+      if (excludedTags.some((t) => rTags.includes(t))) return false;
+      if (includedTags.length > 0 && !includedTags.some((t) => rTags.includes(t))) return false;
+      return true;
     });
-    return bookmarkOnlyView ? ranked.filter((r) => bookmarks.includes(r.id)) : ranked;
-  }, [
-    searchQuery,
-    userIngredients,
-    userEquipment,
-    userAllergies,
-    prefStates,
-    tagStates,
-    bookmarkOnlyView,
-    bookmarks,
-  ]);
+
+    return filtered;
+  }, [recipes, tagStates, bookmarkOnlyView, bookmarks]);
 
   const getPrefStyle = (state: PrefState) => {
     if (state === 'green') return styles.chipGreen;
@@ -233,7 +343,7 @@ export default function App() {
           </View>
         </View>
 
-        {/* Primary Search Box: tapping/focusing opens the tags section */}
+        {/* Primary Search Box */}
         <TouchableOpacity
           activeOpacity={1}
           onPress={() => setTagsPanelOpen(true)}
@@ -249,6 +359,7 @@ export default function App() {
             style={styles.searchInput}
             returnKeyType="search"
           />
+          {loadingRecipes && <ActivityIndicator size="small" color="#111827" />}
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
               <Ionicons name="close-circle" size={18} color="#9CA3AF" />
@@ -256,29 +367,31 @@ export default function App() {
           )}
         </TouchableOpacity>
 
-        {/* Preferences: 1 click -> green | 2 click -> red */}
+        {apiError && <Text style={styles.errorText}>{apiError}</Text>}
+
+        {/* Preferences from DB: 1 click -> green | 2 click -> red | 3 click -> off */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.prefScroll}
         >
-          {PREFERENCES_LIST.map((pref) => {
-            const st = prefStates[pref];
+          {catalogPreferences.map((pref) => {
+            const st = prefStatesById[pref.preference_id] || 'off';
             return (
               <TouchableOpacity
-                key={pref}
-                onPress={() => cyclePref(pref)}
+                key={pref.preference_id}
+                onPress={() => cyclePref(pref.preference_id)}
                 style={[styles.prefChip, getPrefStyle(st)]}
               >
                 <Text style={[styles.prefChipText, st !== 'off' && styles.textWhite]}>
-                  {pref} {st === 'green' ? '✓' : st === 'red' ? '✕' : ''}
+                  {pref.preference_name} {st === 'green' ? '✓' : st === 'red' ? '✕' : ''}
                 </Text>
               </TouchableOpacity>
             );
           })}
         </ScrollView>
 
-        {/* Expandable Tags Section (shown when search bar is tapped/focused or Tags button pressed) */}
+        {/* Expandable Tags Section */}
         {tagsPanelOpen && (
           <View style={styles.tagSection}>
             <View style={styles.tagSearchRow}>
@@ -348,7 +461,6 @@ export default function App() {
                   {item.title}
                 </Text>
 
-                {/* Heart = Bookmark / Time = Total time for recipe */}
                 <View style={styles.cardFooter}>
                   <TouchableOpacity
                     onPress={(e) => {
@@ -375,7 +487,9 @@ export default function App() {
         }}
         ListEmptyComponent={
           <Text style={styles.emptyText}>
-            No matching recipes found with current filters/equipment.
+            {loadingRecipes
+              ? 'Loading recipes from backend...'
+              : 'No recipes returned from backend.'}
           </Text>
         }
       />
@@ -427,7 +541,7 @@ export default function App() {
         }
       />
 
-      {/* History Popup (2 options: Search history / Visited recipe) */}
+      {/* History Popup */}
       <HistoryModal
         visible={historyOpen}
         onClose={() => setHistoryOpen(false)}
@@ -451,7 +565,6 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
 
-  // Header
   header: {
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
@@ -494,7 +607,6 @@ const styles = StyleSheet.create({
   },
   bookmarkPillText: { fontSize: 12, fontWeight: '700', color: '#E11D48' },
 
-  // Recipe Search
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -502,10 +614,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 8,
+    gap: 6,
   },
-  searchInput: { flex: 1, marginLeft: 8, fontSize: 14, color: '#111827' },
+  searchInput: { flex: 1, fontSize: 14, color: '#111827' },
+  errorText: { fontSize: 12, color: '#E11D48', marginTop: 6 },
 
-  // Preference chips
   prefScroll: { marginTop: 10 },
   prefChip: {
     marginRight: 8,
@@ -517,7 +630,6 @@ const styles = StyleSheet.create({
   prefChipOff: { backgroundColor: '#FFFFFF', borderColor: '#E5E7EB' },
   prefChipText: { fontSize: 12, fontWeight: '600', color: '#374151' },
 
-  // Expandable Tag Section & Tag Search below Recipe Search
   tagSection: {
     marginTop: 10,
     paddingTop: 10,
@@ -578,12 +690,10 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
 
-  // Shared active states (green = include/on, red = exclude/avoid)
   chipGreen: { backgroundColor: '#059669', borderColor: '#059669' },
   chipRed: { backgroundColor: '#E11D48', borderColor: '#E11D48' },
   textWhite: { color: '#FFFFFF' },
 
-  // Recipe cards
   card: {
     flex: 1,
     margin: 6,

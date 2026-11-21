@@ -1,26 +1,16 @@
-FROM python:3.15-alpine
+FROM node:22-alpine
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
-
-ENV UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1 \
-    UV_NO_DEV=1 \
-    PYTHONUNBUFFERED=1
+RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
-COPY frontend/pyproject.toml ./frontend/
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --package frontend
-
+COPY app.json index.js tsconfig.json nativewind-env.d.ts ./
 COPY frontend/ ./frontend/
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --package frontend
+ENV EXPO_NO_TELEMETRY=1
+EXPOSE 8081
 
-ENV PATH="/app/.venv/bin:$PATH"
-
-CMD ["python", "frontend/src/main.py"]
+CMD ["pnpm", "exec", "expo", "start", "--web", "--port", "8081"]
