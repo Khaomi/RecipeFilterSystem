@@ -5,7 +5,6 @@ requires-python = ">=3.15"
 [manifest]
 members = [
     "backend",
-    "frontend",
     "recipefiltersystem",
 ]
 
@@ -95,11 +94,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/bf/2f/d173f9bf5aba12850
 wheels = [
     { url = "https://files.pythonhosted.org/packages/58/ef/bf79bc47e914dfabc56657bb6a2d33340b1faa5a514b0b92e842aa088d1e/fastapi-0.163.2-py3-none-any.whl", hash = "sha256:825a8fdd18d7bfcb1b86735e9805c59b7400d55c4060d3df5331b62ae452f004", size = 154717, upload-time = "2026-11-17T18:29:02.025Z" },
 ]
-
-[[package]]
-name = "frontend"
-version = "0.1.0"
-source = { virtual = "frontend" }
 
 [[package]]
 name = "h11"

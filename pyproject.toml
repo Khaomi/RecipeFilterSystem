@@ -17,6 +17,5 @@ packages = [
 # Incase any one of you use uv (like me)
 [tool.uv.workspace]
 members = [
-    "backend",
-    "frontend"
+    "backend"
 ]
