@@ -10,7 +10,6 @@ dev = [
 
 [tool.setuptools]
 packages = [
-    "frontend",
     "backend"
 ]
 

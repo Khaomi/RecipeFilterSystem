@@ -4,11 +4,10 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml ./
+COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-COPY app.json index.js tsconfig.json nativewind-env.d.ts ./
-COPY frontend/ ./frontend/
+COPY frontend/ ./
 
 ENV EXPO_NO_TELEMETRY=1
 EXPOSE 8081
