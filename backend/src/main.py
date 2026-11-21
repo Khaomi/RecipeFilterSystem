@@ -1,17 +1,22 @@
 # ALWAYS EXPOSE ON PORT 8000
 
+from pathlib import Path
+
 import psycopg
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pymongo.errors import PyMongoError
 from views import catalog, recipes
 
 app = FastAPI(title="Order up! API")
 app.include_router(catalog.router)
 app.include_router(recipes.router)
+# Recipe images are stored locally; recipes.image_path is relative to this folder, e.g. "images/x.jpg".
+app.mount("/images", StaticFiles(directory=Path(__file__).parent / "images"), name="images")
 
 app.add_middleware(
     CORSMiddleware,

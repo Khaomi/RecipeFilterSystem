@@ -1,11 +1,5 @@
-import { Platform } from 'react-native';
-
-// Replace LAN_IP with your computer's local IPv4 address when testing on a physical phone
-const LAN_IP = '192.168.1.50';
-
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ||
-  (Platform.OS === 'android' ? 'http://10.0.2.2:8000' : `http://${LAN_IP}:8000`);
+// Set by compose (EXPO_PUBLIC_API_URL); falls back to the local backend.
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 export interface CatalogIngredient {
   ingredient_id: number;
@@ -40,6 +34,7 @@ export interface SearchRecipesPayload {
   exclude_preferences?: number[];
   limit?: number;
   offset?: number;
+  log?: boolean;
 }
 
 export interface RecipeSearchItem {
@@ -77,10 +72,9 @@ export interface RecipeDetailResponse {
     preference_name: string;
   }[];
   details: {
+    author?: string;
+    updated_at?: string;
     instructions?: string[];
-    tip?: string;
-    instructor?: string;
-    [key: string]: unknown;
   } | null;
 }
 
@@ -91,7 +85,9 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data?.error || `HTTP ${res.status}`);
+    // Message is the API errorCode (e.g. "20"), for callers to pick their own wording.
+    // The API's `error` text is documentation only and is never shown.
+    throw new Error(String(data?.errorCode ?? res.status));
   }
   return data as T;
 }
@@ -127,6 +123,7 @@ export const orderUpApi = {
         exclude_preferences: payload.exclude_preferences ?? [],
         limit: payload.limit ?? 20,
         offset: payload.offset ?? 0,
+        log: payload.log ?? false,
       }),
     }),
 

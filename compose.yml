@@ -55,6 +55,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./backend/src/recipe_schema_ver_02.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./backend/src/temp_seed.sql:/docker-entrypoint-initdb.d/02_temp_seed.sql:ro
 
   mongodb:
     image: mongo:9.0
@@ -70,6 +71,7 @@ services:
       - MONGO_INITDB_ROOT_PASSWORD=${MONGO_INITDB_ROOT_PASSWORD:-8j7Y57zArmmhsTe6ufqWCAZdBsj2l8zE}
     volumes:
       - mongo_data:/data/db
+      - ./backend/src/mongo_seed.js:/docker-entrypoint-initdb.d/01_seed.js:ro
 
 volumes:
   postgres_data:

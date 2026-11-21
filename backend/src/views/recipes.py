@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from lib.db import mongo, pg
+from lib.db import USER_ID, mongo, pg
 from pydantic import BaseModel, Field
+from pymongo.errors import PyMongoError
 
 router = APIRouter(prefix="/recipes")
 
@@ -18,6 +19,8 @@ class SearchBody(BaseModel):
     exclude_preferences: list[int] = []
     limit: int = Field(20, ge=1, le=100)
     offset: int = Field(0, ge=0)
+    # The frontend sets this only when the user submits a search, not on every keystroke.
+    log: bool = False
 
 
 @router.post("/search")
@@ -77,11 +80,30 @@ def search_recipes(body: SearchBody):
             },
         ).fetchall()
 
-    # Only log the first page so paging through results isn't logged as new searches.
-    if body.offset == 0:
-        mongo.search_history.insert_one(
-            {**body.model_dump(exclude={"limit", "offset"}), "searched_at": datetime.now(UTC)}
-        )
+        if body.log:
+            inventory = conn.execute(
+                """
+                select array(select ingredient_id from user_ingredients where user_id = %(u)s) as ingredients,
+                       array(select equipment_id from user_equipment where user_id = %(u)s) as equipment
+                """,
+                {"u": USER_ID},
+            ).fetchone()
+
+    # History is best-effort: a Mongo outage must not hide the search results.
+    if body.log:
+        try:
+            mongo.search_history.insert_one(
+                {
+                    "name": body.name,
+                    "filters": body.model_dump(exclude={"name", "limit", "offset", "log"}),
+                    "available_ingredients": inventory["ingredients"],
+                    "available_equipment": inventory["equipment"],
+                    "result_ids": [row["recipe_id"] for row in rows],
+                    "searched_at": datetime.now(UTC),
+                }
+            )
+        except PyMongoError:
+            pass
     return rows
 
 

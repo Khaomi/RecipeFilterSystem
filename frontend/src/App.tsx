@@ -24,34 +24,35 @@ import { HistoryModal } from './components/HistoryModal';
 import { InventoryModal } from './components/InventoryModal';
 import { RecipeDetailModal } from './Equipment/RecipeDetailModal';
 import {
+  API_BASE_URL,
   orderUpApi,
+  CatalogCategory,
+  CatalogIngredient,
   CatalogPreference,
   RecipeSearchItem,
   RecipeDetailResponse,
 } from './api/orderUpApi';
 
-const ALL_TAGS = [
-  'breakfast',
-  'oats',
-  'vegan',
-  'quick',
-  'savory',
-  'sweet',
-  'vegetarian',
-  'greens',
-  'meal-prep',
-  'high-protein',
-  'comfort',
-  'low-calorie',
-];
+// Images are served locally by the backend; image_path is relative, e.g. "images/x.jpg".
+const imageUrl = (path: string | null) =>
+  `${API_BASE_URL}/${path || 'images/placeholder.svg'}`;
+
+// Tag chips are ingredients and ingredient categories. Keys: "c:<category_id>" / "i:<ingredient_id>".
+interface TagOption {
+  key: string;
+  label: string;
+}
+
+const tagIds = (states: Record<string, TriState>, kind: 'c' | 'i', state: TriState) =>
+  Object.entries(states)
+    .filter(([key, st]) => st === state && key.startsWith(`${kind}:`))
+    .map(([key]) => Number(key.slice(2)));
 
 function mapApiSearchItemToRecipe(item: RecipeSearchItem): Recipe {
   return {
     id: String(item.recipe_id),
     title: item.recipe_name,
-    image:
-      item.image_path ||
-      'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=800',
+    image: imageUrl(item.image_path),
     totalTimeMinutes: item.cook_time_min ?? 15,
     tags: [],
     ingredients: [],
@@ -67,9 +68,6 @@ function mergeDetailIntoRecipe(base: Recipe, detail: RecipeDetailResponse): Reci
   const apiInstructions = Array.isArray(detail.details?.instructions)
     ? (detail.details.instructions as string[])
     : [];
-
-  const apiTip =
-    typeof detail.details?.tip === 'string' ? detail.details.tip : undefined;
 
   const apiIngredients = (detail.ingredients ?? []).map((ing) => ({
     name: ing.ingredient_name,
@@ -88,13 +86,13 @@ function mergeDetailIntoRecipe(base: Recipe, detail: RecipeDetailResponse): Reci
     ...base,
     id: String(detail.recipe_id),
     title: detail.recipe_name,
-    image: detail.image_path || base.image,
+    image: imageUrl(detail.image_path),
     totalTimeMinutes: detail.cook_time_min ?? base.totalTimeMinutes,
     tags: derivedTags,
     ingredients: apiIngredients,
     equipment: apiEquipment,
     instructions: apiInstructions,
-    tip: apiTip,
+    tip: undefined,
   };
 }
 
@@ -118,6 +116,8 @@ export default function App() {
 
   // Backend catalog & search state
   const [catalogPreferences, setCatalogPreferences] = useState<CatalogPreference[]>([]);
+  const [catalogCategories, setCatalogCategories] = useState<CatalogCategory[]>([]);
+  const [catalogIngredients, setCatalogIngredients] = useState<CatalogIngredient[]>([]);
   const [prefStatesById, setPrefStatesById] = useState<Record<number, PrefState>>({});
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loadingRecipes, setLoadingRecipes] = useState(false);
@@ -143,49 +143,59 @@ export default function App() {
     })();
   }, []);
 
-  // Load preferences directly from FastAPI /catalog/preferences
+  // Load preference chips and tag chips (categories + ingredients) from /catalog
   useEffect(() => {
-    orderUpApi
-      .getPreferences()
-      .then((prefs) => {
+    Promise.all([
+      orderUpApi.getPreferences(),
+      orderUpApi.getCategories(),
+      orderUpApi.getIngredients(),
+    ])
+      .then(([prefs, categories, ingredients]) => {
         setCatalogPreferences(prefs);
+        setCatalogCategories(categories);
+        setCatalogIngredients(ingredients);
         setApiError(null);
       })
-      .catch((err: Error) => {
-        setApiError(err.message || 'Failed to load preferences from backend');
+      .catch(() => {
+        setApiError("Couldn't load the filters. Please try again.");
       });
   }, []);
 
-  // Query FastAPI POST /recipes/search
+  const searchPayload = useMemo(
+    () => ({
+      name: searchQuery.trim(),
+      include_ingredients: tagIds(tagStates, 'i', 'include'),
+      exclude_ingredients: tagIds(tagStates, 'i', 'exclude'),
+      include_categories: tagIds(tagStates, 'c', 'include'),
+      exclude_categories: tagIds(tagStates, 'c', 'exclude'),
+      include_preferences: Object.entries(prefStatesById)
+        .filter(([, st]) => st === 'green')
+        .map(([id]) => Number(id)),
+      exclude_preferences: Object.entries(prefStatesById)
+        .filter(([, st]) => st === 'red')
+        .map(([id]) => Number(id)),
+      limit: 20,
+      offset: 0,
+    }),
+    [searchQuery, tagStates, prefStatesById]
+  );
+
+  // Query FastAPI POST /recipes/search (live, not logged to history)
   useEffect(() => {
     let cancelled = false;
     setLoadingRecipes(true);
     setApiError(null);
 
-    const include_preferences = Object.entries(prefStatesById)
-      .filter(([, st]) => st === 'green')
-      .map(([id]) => Number(id));
-
-    const exclude_preferences = Object.entries(prefStatesById)
-      .filter(([, st]) => st === 'red')
-      .map(([id]) => Number(id));
-
     orderUpApi
-      .searchRecipes({
-        name: searchQuery.trim(),
-        include_preferences,
-        exclude_preferences,
-        limit: 20,
-        offset: 0,
-      })
+      .searchRecipes(searchPayload)
       .then((rows) => {
         if (cancelled) return;
         setRecipes(rows.map(mapApiSearchItemToRecipe));
       })
-      .catch((err: Error) => {
+      .catch(() => {
         if (cancelled) return;
         setRecipes([]);
-        setApiError(err.message || 'Failed to fetch recipes from backend');
+        setApiError("Couldn't load recipes. Please try again.");
       })
       .finally(() => {
         if (!cancelled) setLoadingRecipes(false);
@@ -194,7 +204,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [searchQuery, prefStatesById]);
+  }, [searchPayload]);
 
   const cyclePref = (prefId: number) => {
     setPrefStatesById((prev) => {
@@ -214,6 +224,9 @@ export default function App() {
   };
 
   const commitSearchHistory = async (text: string) => {
+    // Submitted searches are logged to Mongo search_history by the backend.
+    orderUpApi.searchRecipes({ ...searchPayload, log: true }).catch(() => {});
+
     const trimmed = text.trim();
     if (!trimmed) return;
     const entry: HistoryEntry = {
@@ -245,7 +258,11 @@ export default function App() {
         finalRecipe = mergeDetailIntoRecipe(recipe, detail);
         setSelectedRecipe(finalRecipe);
       } catch (err) {
-        setApiError(err instanceof Error ? err.message : 'Failed to load recipe detail');
+        setApiError(
+          err instanceof Error && err.message === '20'
+            ? 'This recipe no longer exists.'
+            : "Couldn't load this recipe. Please try again."
+        );
       }
     }
 
@@ -268,34 +285,25 @@ export default function App() {
   };
 
   const filteredTags = useMemo(() => {
+    const all: TagOption[] = [
+      ...catalogCategories.map((c) => ({ key: `c:${c.category_id}`, label: `All ${c.category_name}` })),
+      ...catalogIngredients.map((i) => ({ key: `i:${i.ingredient_id}`, label: i.ingredient_name })),
+    ];
     const q = tagSearchQuery.trim().toLowerCase();
-    if (!q) return ALL_TAGS;
-    return ALL_TAGS.filter((t) => t.toLowerCase().includes(q));
-  }, [tagSearchQuery]);
+    if (!q) return all;
+    return all.filter((t) => t.label.toLowerCase().includes(q));
+  }, [tagSearchQuery, catalogCategories, catalogIngredients]);
 
   const activeTagCount = useMemo(
     () => Object.values(tagStates).filter((st) => st !== 'neutral').length,
     [tagStates]
   );
 
-  const displayedRecipes = useMemo(() => {
-    const includedTags = Object.entries(tagStates)
-      .filter(([, st]) => st === 'include')
-      .map(([t]) => t.toLowerCase());
-    const excludedTags = Object.entries(tagStates)
-      .filter(([, st]) => st === 'exclude')
-      .map(([t]) => t.toLowerCase());
-
-    const filtered = recipes.filter((r) => {
-      if (bookmarkOnlyView && !bookmarks.includes(r.id)) return false;
-      const rTags = r.tags.map((t) => t.toLowerCase());
-      if (excludedTags.some((t) => rTags.includes(t))) return false;
-      if (includedTags.length > 0 && !includedTags.some((t) => rTags.includes(t))) return false;
-      return true;
-    });
-
-    return filtered;
-  }, [recipes, tagStates, bookmarkOnlyView, bookmarks]);
+  // Tag filtering happens in the backend search; only the bookmark view filters here.
+  const displayedRecipes = useMemo(
+    () => (bookmarkOnlyView ? recipes.filter((r) => bookmarks.includes(r.id)) : recipes),
+    [recipes, bookmarkOnlyView, bookmarks]
+  );
 
   const getPrefStyle = (state: PrefState) => {
     if (state === 'green') return styles.chipGreen;
@@ -400,7 +408,7 @@ export default function App() {
                 <TextInput
                   value={tagSearchQuery}
                   onChangeText={setTagSearchQuery}
-                  placeholder="Search tags (e.g. vegan, quick, oats)..."
+                  placeholder="Search ingredients or categories (e.g. Eggs, Dairy)..."
                   style={styles.tagSearchInput}
                 />
                 {tagSearchQuery.length > 0 && (
@@ -424,15 +432,15 @@ export default function App() {
               style={styles.tagScroll}
             >
               {filteredTags.map((tag) => {
-                const st = tagStates[tag] || 'neutral';
+                const st = tagStates[tag.key] || 'neutral';
                 return (
                   <TouchableOpacity
-                    key={tag}
-                    onPress={() => cycleTag(tag)}
+                    key={tag.key}
+                    onPress={() => cycleTag(tag.key)}
                     style={[styles.tagChip, getTagStyle(st)]}
                   >
                     <Text style={[styles.tagChipText, st !== 'neutral' && styles.textWhite]}>
-                      #{tag} {st === 'include' ? '+' : st === 'exclude' ? '−' : ''}
+                      #{tag.label} {st === 'include' ? '+' : st === 'exclude' ? '−' : ''}
                     </Text>
                   </TouchableOpacity>
                 );
