@@ -149,6 +149,8 @@ export default function App() {
   });
   const [inventoryMessage, setInventoryMessage] = useState<string | null>(null);
   const [inventoryVersion, setInventoryVersion] = useState(0);
+  // "Use my kitchen": off shows every recipe regardless of equipment (allergies still apply).
+  const [useInventory, setUseInventory] = useState(true);
 
   // Bookmarks, history and activity live in Mongo.
   const [bookmarkItems, setBookmarkItems] = useState<Recipe[]>([]);
@@ -240,10 +242,11 @@ export default function App() {
       exclude_preferences: Object.entries(prefStatesById)
         .filter(([, st]) => st === 'red')
         .map(([id]) => Number(id)),
-      limit: 20,
+      limit: 100,
       offset: 0,
+      use_inventory: useInventory,
     }),
-    [searchQuery, tagStates, prefStatesById]
+    [searchQuery, tagStates, prefStatesById, useInventory]
   );
 
   // Query FastAPI POST /recipes/search (live, not logged to history)
@@ -489,6 +492,20 @@ export default function App() {
                   <Text style={styles.bookmarkPillText}>Bookmarks Only ✕</Text>
                 </TouchableOpacity>
               )}
+
+              <TouchableOpacity
+                onPress={() => setUseInventory((prev) => !prev)}
+                style={[styles.kitchenToggle, useInventory && styles.kitchenToggleOn]}
+              >
+                <Ionicons
+                  name={useInventory ? 'checkbox' : 'square-outline'}
+                  size={20}
+                  color={useInventory ? '#047857' : '#6B7280'}
+                />
+                <Text style={[styles.kitchenToggleText, useInventory && styles.kitchenToggleTextOn]}>
+                  Use my kitchen
+                </Text>
+              </TouchableOpacity>
 
               {/* `hovered` is provided by react-native-web */}
               <Pressable onPress={() => setTagsPanelOpen((prev) => !prev)}>
@@ -746,6 +763,21 @@ const styles = StyleSheet.create({
     backgroundColor: '#4A4466',
   },
   tagsToggleBtnHover: { backgroundColor: '#9FCBAD' },
+
+  kitchenToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+  },
+  kitchenToggleOn: { borderColor: '#6EE7B7', backgroundColor: '#ECFDF5' },
+  kitchenToggleText: { fontSize: 16, fontWeight: '600', color: '#6B7280' },
+  kitchenToggleTextOn: { color: '#047857' },
   tagsToggleText: { fontSize: 16, fontWeight: '700' },
 
   bookmarkPill: {

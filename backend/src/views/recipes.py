@@ -21,6 +21,9 @@ class SearchBody(BaseModel):
     offset: int = Field(0, ge=0)
     # The frontend sets this only when the user submits a search, not on every keystroke.
     log: bool = False
+    # False skips the equipment cut-off and the missing-ingredient ranking ("Use my kitchen" off).
+    # Allergies are always applied.
+    use_inventory: bool = True
 
 
 @router.post("/search")
@@ -53,12 +56,12 @@ def search_recipes(body: SearchBody):
             left join user_ingredients ui on ui.ingredient_id = ri.ingredient_id and ui.user_id = %(u)s
             left join user_allergies ua on ua.ingredient_id = ri.ingredient_id and ua.user_id = %(u)s
             where r.recipe_name ilike %(name)s
-              and not exists (
+              and (not %(inv)s or not exists (
                   select 1
                   from recipe_equipment re
                   where re.recipe_id = r.recipe_id
                     and re.equipment_id not in (select equipment_id from user_equipment where user_id = %(u)s)
-              )
+              ))
               and not exists (
                   select 1
                   from recipe_ingredients a
@@ -88,11 +91,16 @@ def search_recipes(body: SearchBody):
                        where ri.ingredient_id = any(%(inc_i)s::int[])
                           or i.category_id = any(%(inc_c)s::int[])
                    ) > 0
-            order by allergen_optional, matched_count desc, missing_count, r.recipe_name, r.recipe_id
+            order by allergen_optional, matched_count desc,
+                     case when %(inv)s then count(ri.ingredient_id) filter (
+                         where not ri.is_optional and ui.ingredient_id is null and not i.is_staple
+                     ) end,
+                     r.recipe_name, r.recipe_id
             limit %(limit)s offset %(offset)s
             """,
             {
                 "u": USER_ID,
+                "inv": body.use_inventory,
                 "name": f"%{body.name}%",
                 "inc_i": body.include_ingredients,
                 "exc_i": body.exclude_ingredients,
@@ -120,7 +128,8 @@ def search_recipes(body: SearchBody):
             mongo.search_history.insert_one(
                 {
                     "name": body.name,
-                    "filters": body.model_dump(exclude={"name", "limit", "offset", "log"}),
+                    "filters": body.model_dump(exclude={"name", "limit", "offset", "log", "use_inventory"}),
+                    "use_inventory": body.use_inventory,
                     "available_ingredients": inventory["ingredients"],
                     "available_equipment": inventory["equipment"],
                     "result_ids": [row["recipe_id"] for row in rows],

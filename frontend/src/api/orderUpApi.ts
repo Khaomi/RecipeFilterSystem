@@ -35,6 +35,7 @@ export interface SearchRecipesPayload {
   limit?: number;
   offset?: number;
   log?: boolean;
+  use_inventory?: boolean;
 }
 
 export interface RecipeSearchItem {
@@ -172,6 +173,7 @@ export const orderUpApi = {
         limit: payload.limit ?? 20,
         offset: payload.offset ?? 0,
         log: payload.log ?? false,
+        use_inventory: payload.use_inventory ?? true,
       }),
     }),
 

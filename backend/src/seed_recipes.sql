@@ -5,8 +5,8 @@ INSERT INTO recipes (recipe_name, description, cook_time_min, serving, image_pat
   ('Green Curry Chicken',           'Creamy green curry with chicken, Thai eggplant and basil.',         30, 3, 'images/savory.png'),
   ('Pad Thai with Shrimp',          'Stir-fried rice noodles with shrimp, tofu, egg and peanuts.',       25, 2, 'images/savory.png'),
   ('Pork Fried Rice',               'Simple fried rice with pork, egg and onion.',                       15, 2, 'images/savory.png'),
-  ('Som Tum',                       'Green papaya salad pounded with chili, lime and peanuts.',          15, 2, 'images/savory.png'),
-  ('Larb Gai',                      'Minced chicken salad with herbs, lime and toasted rice.',           20, 2, 'images/savory.png'),
+  ('Som Tum',                       'Green papaya salad pounded with chili, lime and peanuts.',          15, 2, 'images/vegan-salad.png'),
+  ('Larb Gai',                      'Minced chicken salad with herbs, lime and toasted rice.',           20, 2, 'images/vegan-salad.png'),
   ('Stir-fried Morning Glory',      'Quick garlicky stir-fried morning glory with soybean paste.',       10, 2, 'images/vegan-salad.png'),
   ('Massaman Beef Curry',           'Mild, rich curry with slow-cooked beef, potato and peanuts.',       90, 4, 'images/savory.png'),
   ('Oven-baked Chicken Satay',      'Turmeric-marinated chicken skewers baked in the oven.',             40, 3, 'images/savory.png'),
@@ -416,9 +416,9 @@ FROM (VALUES
 -- dessert 
 INSERT INTO recipes (recipe_name, description, cook_time_min, serving, image_path) VALUES
 
-  ('Mango Sticky Rice',             'Sweet coconut sticky rice served with ripe mango.',                40,  2, 'images/vegan-salad.png'),
-  ('Bananas in Coconut Milk',       'Warm bananas simmered in sweet and salty coconut milk.',           15,  2, 'images/vegan-salad.png'),
-  ('Coconut Jelly',                 'Firm coconut jelly set with agar, served chilled.',                20,  4, 'images/vegan-salad.png'),
+  ('Mango Sticky Rice',             'Sweet coconut sticky rice served with ripe mango.',                40,  2, 'images/dessert.png'),
+  ('Bananas in Coconut Milk',       'Warm bananas simmered in sweet and salty coconut milk.',           15,  2, 'images/dessert.png'),
+  ('Coconut Jelly',                 'Firm coconut jelly set with agar, served chilled.',                20,  4, 'images/dessert.png'),
   ('Chocolate Chip Cookies',        'Chewy cookies packed with chocolate chips.',                       30, 12, 'images/dessert.png'),
   ('Banana Bread',                  'Moist loaf made with very ripe bananas.',                          70,  8, 'images/dessert.png'),
   ('Fudgy Brownies',                'Rich chocolate brownies with a crackly top.',                      40,  9, 'images/dessert.png'),
@@ -430,13 +430,13 @@ INSERT INTO recipes (recipe_name, description, cook_time_min, serving, image_pat
   ('No-bake Lemon Cheesecake',      'Creamy lemon cheesecake on a biscuit base, set in the fridge.',    30,  8, 'images/dessert.png'),
   ('Rice Pudding',                  'Rice slowly cooked in milk with cinnamon.',                        35,  3, 'images/dessert.png'),
 
-  ('Fried Bananas',                 'Crispy battered bananas with sesame seeds.',                       20,  3, 'images/vegan-salad.png'),
+  ('Fried Bananas',                 'Crispy battered bananas with sesame seeds.',                       20,  3, 'images/dessert.png'),
   ('Fresh Spring Rolls',            'Rice paper rolls with shrimp, noodles and fresh herbs.',           25,  3, 'images/snack.png'),
   ('Thai Fish Cakes',               'Spicy fried fish cakes with long beans and lime leaves.',          30,  3, 'images/snack.png'),
   ('Moo Ping',                      'Sweet garlic pork skewers baked in the oven.',                     40,  3, 'images/snack.png'),
-  ('Guacamole with Tortilla Chips', 'Mashed avocado with lime, onion and chili.',                       10,  3, 'images/vegan-salad.png'),
+  ('Guacamole with Tortilla Chips', 'Mashed avocado with lime, onion and chili.',                       10,  3, 'images/snack.png'),
   ('Garlic Bread',                  'Baguette with garlic butter, baked until crisp.',                  15,  4, 'images/snack.png'),
-  ('Homemade French Fries',         'Crispy deep-fried potato sticks.',                                 30,  2, 'images/vegan-salad.png'),
+  ('Homemade French Fries',         'Crispy deep-fried potato sticks.',                                 30,  2, 'images/snack.png'),
   ('Microwave Popcorn',             'Popcorn popped in the microwave.',                                  5,  2, 'images/snack.png'),
   ('Cheese Quesadilla',             'Toasted tortilla filled with melted cheese.',                      10,  1, 'images/snack.png'),
   ('Deviled Eggs',                  'Hard-boiled eggs filled with creamy seasoned yolk.',               20,  4, 'images/snack.png');
