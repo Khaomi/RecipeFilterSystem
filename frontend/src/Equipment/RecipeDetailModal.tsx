@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,8 @@ interface Props {
   isBookmarked: boolean;
   onToggleBookmark: (id: string) => void;
   onClose: () => void;
+  onEdit: () => void;
+  onDelete: (id: string) => void;
 }
 
 export const RecipeDetailModal: React.FC<Props> = ({
@@ -24,8 +26,12 @@ export const RecipeDetailModal: React.FC<Props> = ({
   isBookmarked,
   onToggleBookmark,
   onClose,
+  onEdit,
+  onDelete,
 }) => {
   const { width } = useWindowDimensions();
+  // Delete needs a second tap to confirm.
+  const [confirmDelete, setConfirmDelete] = useState(false);
   // Directions and ingredients side by side on wide screens, stacked on narrow ones.
   const twoColumns = width >= 900;
 
@@ -45,20 +51,50 @@ export const RecipeDetailModal: React.FC<Props> = ({
               <TouchableOpacity onPress={onClose} style={styles.backButton}>
                 <Ionicons name="arrow-back" size={22} color="#111827" />
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => onToggleBookmark(recipe.id)}
-                style={styles.bookmarkButton}
-              >
-                <Ionicons
-                  name={isBookmarked ? 'heart' : 'heart-outline'}
-                  size={20}
-                  color={isBookmarked ? '#EF4444' : '#374151'}
-                />
-                <Text style={styles.bookmarkText}>{isBookmarked ? 'Bookmarked' : 'Bookmark'}</Text>
-              </TouchableOpacity>
+              <View style={styles.topActions}>
+                <TouchableOpacity onPress={onEdit} style={styles.bookmarkButton}>
+                  <Ionicons name="create-outline" size={20} color="#374151" />
+                  <Text style={styles.bookmarkText}>Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => (confirmDelete ? onDelete(recipe.id) : setConfirmDelete(true))}
+                  style={[styles.bookmarkButton, confirmDelete && styles.deleteConfirm]}
+                >
+                  <Ionicons name="trash-outline" size={20} color={confirmDelete ? '#FFFFFF' : '#DC2626'} />
+                  <Text style={[styles.bookmarkText, confirmDelete ? styles.textWhite : styles.deleteText]}>
+                    {confirmDelete ? 'Tap again to delete' : 'Delete'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => onToggleBookmark(recipe.id)}
+                  style={styles.bookmarkButton}
+                >
+                  <Ionicons
+                    name={isBookmarked ? 'heart' : 'heart-outline'}
+                    size={20}
+                    color={isBookmarked ? '#EF4444' : '#374151'}
+                  />
+                  <Text style={styles.bookmarkText}>{isBookmarked ? 'Bookmarked' : 'Bookmark'}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
 
             <Text style={styles.recipeTitle}>{recipe.title}</Text>
+            {(recipe.author || recipe.updatedAt) && (
+              <Text style={styles.byline}>
+                {[
+                  recipe.author && `By ${recipe.author}`,
+                  recipe.updatedAt &&
+                    `Updated ${new Date(recipe.updatedAt).toLocaleDateString(undefined, {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </Text>
+            )}
 
             {/* Picture */}
             <Image source={{ uri: recipe.image }} style={styles.heroImage} />
@@ -162,8 +198,13 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
   },
   bookmarkText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  topActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 },
+  deleteConfirm: { backgroundColor: '#DC2626', borderColor: '#DC2626' },
+  deleteText: { color: '#DC2626' },
+  textWhite: { color: '#FFFFFF' },
 
   recipeTitle: { fontSize: 32, fontWeight: '800', color: '#111827', marginBottom: 16 },
+  byline: { fontSize: 15, color: '#6B7280', marginTop: -10, marginBottom: 16 },
 
   // Narrower picture, like a recipe site
   heroImage: {

@@ -2,7 +2,13 @@ import React from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-export type SidebarSection = 'ingredients' | 'equipments' | 'allergies' | 'bookmark' | 'history';
+export type SidebarSection =
+  | 'ingredients'
+  | 'equipments'
+  | 'allergies'
+  | 'bookmark'
+  | 'history'
+  | 'newRecipe';
 
 interface Props {
   visible: boolean;
@@ -34,6 +40,7 @@ export const SidebarDrawer: React.FC<Props> = ({
     { key: 'allergies', label: 'Allergies', icon: 'warning-outline', badge: `${allergyCount}` },
     { key: 'bookmark', label: 'Bookmark', icon: 'heart-outline', badge: `${bookmarkCount}` },
     { key: 'history', label: 'History', icon: 'time-outline' },
+    { key: 'newRecipe', label: 'New recipe', icon: 'add-circle-outline' },
   ];
 
   return (

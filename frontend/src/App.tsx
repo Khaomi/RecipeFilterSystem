@@ -27,6 +27,7 @@ import {
 import { SidebarDrawer } from './components/SidebarDrawer';
 import { HistoryModal, VisitedItem } from './components/HistoryModal';
 import { InventoryModal } from './components/InventoryModal';
+import { RecipeEditorModal } from './components/RecipeEditorModal';
 import { RecipeDetailModal } from './Equipment/RecipeDetailModal';
 import {
   API_BASE_URL,
@@ -41,6 +42,7 @@ import {
   RecipeSearchItem,
   RecipeSummary,
   RecipeDetailResponse,
+  RecipeSaveBody,
 } from './api/orderUpApi';
 
 const TAG_PANEL_WIDTH = 360;
@@ -128,6 +130,8 @@ function mergeDetailIntoRecipe(base: Recipe, detail: RecipeDetailResponse): Reci
     equipment: apiEquipment,
     instructions: apiInstructions,
     tip: undefined,
+    author: detail.details?.author || undefined,
+    updatedAt: detail.details?.updated_at,
   };
 }
 
@@ -158,6 +162,14 @@ export default function App() {
   const [visitedRecipes, setVisitedRecipes] = useState<VisitedItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  // Raw API detail of the open recipe; the editor starts from it.
+  const [selectedDetail, setSelectedDetail] = useState<RecipeDetailResponse | null>(null);
+
+  // Recipe editor; recipesVersion re-runs the search after a save/delete.
+  const [editorMode, setEditorMode] = useState<'create' | 'edit' | null>(null);
+  const [editorMessage, setEditorMessage] = useState<string | null>(null);
+  const [savingRecipe, setSavingRecipe] = useState(false);
+  const [recipesVersion, setRecipesVersion] = useState(0);
   const bookmarks = bookmarkItems.map((r) => r.id);
 
   // Backend catalog & search state
@@ -273,7 +285,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [searchPayload, inventoryVersion]);
+  }, [searchPayload, inventoryVersion, recipesVersion]);
 
   const cyclePref = (prefId: number) => {
     setPrefStatesById((prev) => {
@@ -311,9 +323,11 @@ export default function App() {
   // Opening a recipe also logs the visit (done by the backend).
   const openRecipe = async (recipe: Recipe) => {
     setSelectedRecipe(recipe);
+    setSelectedDetail(null);
     try {
       const detail = await orderUpApi.getRecipeDetail(Number(recipe.id));
       setSelectedRecipe(mergeDetailIntoRecipe(recipe, detail));
+      setSelectedDetail(detail);
     } catch (err) {
       setApiError(
         err instanceof Error && err.message === '20'
@@ -321,6 +335,62 @@ export default function App() {
           : "Couldn't load this recipe. Please try again."
       );
     }
+  };
+
+  // Create or update in one backend transaction (Postgres + Mongo); then show the saved recipe.
+  const saveRecipe = async (body: RecipeSaveBody) => {
+    setSavingRecipe(true);
+    try {
+      const { recipe_id } =
+        editorMode === 'edit' && selectedDetail
+          ? await orderUpApi.updateRecipe(selectedDetail.recipe_id, body)
+          : await orderUpApi.createRecipe(body);
+      setEditorMode(null);
+      setEditorMessage(null);
+      setRecipesVersion((v) => v + 1);
+      loadBookmarks().catch(() => {});
+      openRecipe(
+        mapApiSearchItemToRecipe({
+          recipe_id,
+          recipe_name: body.recipe_name,
+          cook_time_min: body.cook_time_min,
+          serving: body.serving,
+          image_path: body.image_path,
+        })
+      );
+    } catch (err) {
+      const code = err instanceof Error ? err.message : '';
+      setEditorMessage(
+        code === '10'
+          ? 'Some fields are invalid. Check the name, numbers and picture.'
+          : code === '11'
+          ? 'One of the picked items no longer exists. Reopen the editor and try again.'
+          : code === '12'
+          ? 'Each ingredient can only be added once.'
+          : code === '20'
+          ? 'This recipe no longer exists.'
+          : "Couldn't save the recipe, so nothing was changed. Please try again."
+      );
+    } finally {
+      setSavingRecipe(false);
+    }
+  };
+
+  const deleteRecipe = async (recipeId: string) => {
+    try {
+      await orderUpApi.deleteRecipe(Number(recipeId));
+    } catch (err) {
+      const code = err instanceof Error ? err.message : '';
+      setApiError(
+        code === '20'
+          ? 'This recipe was already deleted.'
+          : "Couldn't delete the recipe, so nothing was changed. Please try again."
+      );
+    }
+    setSelectedRecipe(null);
+    setSelectedDetail(null);
+    setRecipesVersion((v) => v + 1);
+    loadBookmarks().catch(() => {});
   };
 
   const changeInventory = async (kind: InventoryKind, change: Promise<unknown>) => {
@@ -346,7 +416,11 @@ export default function App() {
     loadHistory().catch(() => setApiError("Couldn't load your history. Please try again."));
   };
 
-  const ingredientOptions = catalogIngredients.map((i) => ({ id: i.ingredient_id, name: i.ingredient_name }));
+  const ingredientOptions = catalogIngredients.map((i) => ({
+    id: i.ingredient_id,
+    name: i.ingredient_name,
+    category: i.category_name,
+  }));
   const equipmentOptions = catalogEquipment.map((e) => ({ id: e.equipment_id, name: e.equipment_name }));
 
   const filteredTags = useMemo(() => {
@@ -680,6 +754,7 @@ export default function App() {
           if (sec === 'allergies') setInventoryMode('allergies');
           if (sec === 'bookmark') setBookmarkOnlyView((prev) => !prev);
           if (sec === 'history') openHistory();
+          if (sec === 'newRecipe') setEditorMode('create');
         }}
       />
 
@@ -719,13 +794,38 @@ export default function App() {
         onClear={(kind) => orderUpApi.clearHistory(kind).catch(() => {}).then(loadHistory)}
       />
 
-      {/* Recipe Page */}
+      {/* Recipe Page (keyed so the delete confirmation resets per recipe) */}
       <RecipeDetailModal
+        key={selectedRecipe?.id ?? 'none'}
         recipe={selectedRecipe}
         isBookmarked={selectedRecipe ? bookmarks.includes(selectedRecipe.id) : false}
         onToggleBookmark={toggleBookmark}
-        onClose={() => setSelectedRecipe(null)}
+        onClose={() => {
+          setSelectedRecipe(null);
+          setSelectedDetail(null);
+        }}
+        onEdit={() => {
+          if (selectedDetail) setEditorMode('edit');
+        }}
+        onDelete={deleteRecipe}
       />
+
+      {/* Recipe editor (create / edit) */}
+      {editorMode && (
+        <RecipeEditorModal
+          initial={editorMode === 'edit' ? selectedDetail : null}
+          ingredientOptions={catalogIngredients}
+          equipmentOptions={catalogEquipment}
+          preferenceOptions={catalogPreferences}
+          message={editorMessage}
+          saving={savingRecipe}
+          onClose={() => {
+            setEditorMode(null);
+            setEditorMessage(null);
+          }}
+          onSave={saveRecipe}
+        />
+      )}
     </SafeAreaView>
   );
 }

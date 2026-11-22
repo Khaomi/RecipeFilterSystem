@@ -1,12 +1,99 @@
 from datetime import UTC, datetime
+from typing import Literal
 
+import psycopg
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from lib.audit import commit_with_audit
 from lib.db import USER_ID, mongo, pg
 from pydantic import BaseModel, Field
 from pymongo.errors import PyMongoError
 
 router = APIRouter(prefix="/recipes")
+
+
+class RecipeIngredientBody(BaseModel):
+    ingredient_id: int
+    quantity_text: str = Field("", max_length=64)
+    is_optional: bool = False
+
+
+class RecipeBody(BaseModel):
+    recipe_name: str = Field(min_length=1, max_length=128)
+    description: str = ""
+    cook_time_min: int | None = Field(None, gt=0)
+    serving: int | None = Field(None, gt=0)
+    # Only the local category pictures can be picked.
+    image_path: (
+        Literal["images/savory.png", "images/dessert.png", "images/snack.png", "images/vegan-salad.png"]
+        | None
+    ) = None
+    ingredients: list[RecipeIngredientBody] = []
+    equipment_ids: list[int] = []
+    preference_ids: list[int] = []
+    # Stored in Mongo recipe_details
+    author: str = ""
+    instructions: list[str] = []
+
+
+class RecipeUpdateBody(RecipeBody):
+    recipe_id: int
+
+
+class RecipeIdBody(BaseModel):
+    recipe_id: int
+
+
+def _write_links(conn: psycopg.Connection, recipe_id: int, body: RecipeBody):
+    """Insert the recipe's ingredient, equipment and preference rows (used by create and update)."""
+    with conn.cursor() as cur:
+        cur.executemany(
+            "insert into recipe_ingredients (recipe_id, ingredient_id, quantity_text, is_optional) values (%s, %s, %s, %s)",
+            [(recipe_id, i.ingredient_id, i.quantity_text or None, i.is_optional) for i in body.ingredients],
+        )
+        cur.executemany(
+            "insert into recipe_equipment (recipe_id, equipment_id) values (%s, %s)",
+            [(recipe_id, e) for e in set(body.equipment_ids)],
+        )
+        cur.executemany(
+            "insert into recipe_preferences (recipe_id, preference_id) values (%s, %s)",
+            [(recipe_id, p) for p in set(body.preference_ids)],
+        )
+
+
+def _commit_recipe(conn: psycopg.Connection, recipe_id: int, body: RecipeBody | None, action: str, fields: dict):
+    """Write (or, with body=None, delete) the Mongo recipe_details, then commit Postgres with an audit log.
+
+    All or nothing: if any step fails, Postgres is rolled back and the previous recipe_details
+    document is put back.
+    """
+    previous = mongo.recipe_details.find_one({"recipe_id": recipe_id})
+    try:
+        if body is None:
+            mongo.recipe_details.delete_one({"recipe_id": recipe_id})
+        else:
+            mongo.recipe_details.update_one(
+                {"recipe_id": recipe_id},
+                {
+                    "$set": {
+                        "author": body.author,
+                        "instructions": [step.strip() for step in body.instructions if step.strip()],
+                        "updated_at": datetime.now(UTC),
+                    }
+                },
+                upsert=True,
+            )
+        commit_with_audit(conn, action, fields)
+    except Exception:
+        conn.rollback()
+        try:
+            if previous is None:
+                mongo.recipe_details.delete_one({"recipe_id": recipe_id})
+            else:
+                mongo.recipe_details.replace_one({"recipe_id": recipe_id}, previous, upsert=True)
+        except PyMongoError:
+            pass
+        raise
 
 
 class SearchBody(BaseModel):
@@ -200,3 +287,90 @@ def get_recipe(recipe_id: int):
     except PyMongoError:
         pass
     return recipe
+
+
+# Recipe create/update/delete. Each one is a single transaction across Postgres
+# (recipes + its 3 link tables) and Mongo (recipe_details + audit_logs).
+
+
+@router.post("/create")
+def create_recipe(body: RecipeBody):
+    with pg.connection() as conn:
+        try:
+            recipe_id = conn.execute(
+                """
+                insert into recipes (recipe_name, description, cook_time_min, serving, image_path)
+                values (%s, %s, %s, %s, %s)
+                returning recipe_id
+                """,
+                (body.recipe_name, body.description or None, body.cook_time_min, body.serving, body.image_path),
+            ).fetchone()["recipe_id"]
+            _write_links(conn, recipe_id, body)
+        except psycopg.errors.ForeignKeyViolation:
+            conn.rollback()
+            return JSONResponse(status_code=400, content={"errorCode": 11, "error": "Unknown ingredient/equipment/preference id"})
+        except psycopg.errors.UniqueViolation:
+            conn.rollback()
+            return JSONResponse(status_code=409, content={"errorCode": 12, "error": "Ingredient listed twice"})
+
+        _commit_recipe(conn, recipe_id, body, "add_recipe", {"id": recipe_id, "name": body.recipe_name})
+    return {"recipe_id": recipe_id}
+
+
+@router.post("/update")
+def update_recipe(body: RecipeUpdateBody):
+    with pg.connection() as conn:
+        try:
+            old = conn.execute(
+                "select recipe_name from recipes where recipe_id = %s for update", (body.recipe_id,)
+            ).fetchone()
+            if old is None:
+                conn.rollback()
+                return JSONResponse(status_code=404, content={"errorCode": 20, "error": "Recipe not found"})
+
+            conn.execute(
+                """
+                update recipes
+                set recipe_name = %s, description = %s, cook_time_min = %s, serving = %s, image_path = %s
+                where recipe_id = %s
+                """,
+                (
+                    body.recipe_name,
+                    body.description or None,
+                    body.cook_time_min,
+                    body.serving,
+                    body.image_path,
+                    body.recipe_id,
+                ),
+            )
+            # Replace the links with the submitted ones.
+            conn.execute("delete from recipe_ingredients where recipe_id = %s", (body.recipe_id,))
+            conn.execute("delete from recipe_equipment where recipe_id = %s", (body.recipe_id,))
+            conn.execute("delete from recipe_preferences where recipe_id = %s", (body.recipe_id,))
+            _write_links(conn, body.recipe_id, body)
+        except psycopg.errors.ForeignKeyViolation:
+            conn.rollback()
+            return JSONResponse(status_code=400, content={"errorCode": 11, "error": "Unknown ingredient/equipment/preference id"})
+        except psycopg.errors.UniqueViolation:
+            conn.rollback()
+            return JSONResponse(status_code=409, content={"errorCode": 12, "error": "Ingredient listed twice"})
+
+        _commit_recipe(
+            conn, body.recipe_id, body, "edit_recipe", {"old_val": old["recipe_name"], "new_val": body.recipe_name}
+        )
+    return {"recipe_id": body.recipe_id}
+
+
+@router.post("/delete")
+def delete_recipe(body: RecipeIdBody):
+    with pg.connection() as conn:
+        # Link rows are removed by "on delete cascade".
+        row = conn.execute(
+            "delete from recipes where recipe_id = %s returning recipe_name", (body.recipe_id,)
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            return JSONResponse(status_code=404, content={"errorCode": 20, "error": "Recipe not found"})
+
+        _commit_recipe(conn, body.recipe_id, None, "delete_recipe", {"id": body.recipe_id, "name": row["recipe_name"]})
+    return {"recipe_id": body.recipe_id}

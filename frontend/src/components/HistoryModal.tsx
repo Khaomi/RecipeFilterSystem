@@ -116,7 +116,7 @@ export const HistoryModal: React.FC<Props> = ({
                   <Ionicons name="list-outline" size={22} color="#111827" />
                   <View>
                     <Text style={styles.menuCardTitle}>Activity log</Text>
-                    <Text style={styles.menuCardSub}>{auditLogs.length} inventory changes</Text>
+                    <Text style={styles.menuCardSub}>{auditLogs.length} changes</Text>
                   </View>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#6B7280" />

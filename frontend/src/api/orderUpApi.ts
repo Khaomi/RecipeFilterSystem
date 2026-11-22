@@ -51,6 +51,20 @@ export interface RecipeSearchItem {
   allergen_optional: boolean;
 }
 
+// Body for POST /recipes/create and /recipes/update
+export interface RecipeSaveBody {
+  recipe_name: string;
+  description: string;
+  cook_time_min: number | null;
+  serving: number | null;
+  image_path: string | null;
+  ingredients: { ingredient_id: number; quantity_text: string; is_optional: boolean }[];
+  equipment_ids: number[];
+  preference_ids: number[];
+  author: string;
+  instructions: string[];
+}
+
 export type InventoryKind = 'ingredients' | 'equipment' | 'allergies';
 
 export interface InventoryItem {
@@ -138,7 +152,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-const post = <T>(path: string, body: unknown) =>
+const post = <T = unknown>(path: string, body: unknown) =>
   requestJson<T>(path, { method: 'POST', body: JSON.stringify(body) });
 
 export const orderUpApi = {
@@ -180,6 +194,12 @@ export const orderUpApi = {
   // Also logs the visit to Mongo visited_recipes.
   getRecipeDetail: (recipeId: number) =>
     requestJson<RecipeDetailResponse>(`/recipes/${recipeId}`),
+
+  // Recipe editor (Postgres recipe + links, Mongo recipe_details + audit log, one transaction)
+  createRecipe: (body: RecipeSaveBody) => post<{ recipe_id: number }>('/recipes/create', body),
+  updateRecipe: (recipeId: number, body: RecipeSaveBody) =>
+    post<{ recipe_id: number }>('/recipes/update', { recipe_id: recipeId, ...body }),
+  deleteRecipe: (recipeId: number) => post<{ recipe_id: number }>('/recipes/delete', { recipe_id: recipeId }),
 
   // Inventory (Postgres; every change also writes a Mongo audit log in one transaction)
   getInventory: (kind: InventoryKind) => requestJson<InventoryItem[]>(`/inventory/${kind}`),

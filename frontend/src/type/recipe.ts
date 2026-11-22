@@ -42,6 +42,9 @@ export interface Recipe {
   allergens: string[];
   instructions: string[];
   tip?: string;
+  // From Mongo recipe_details
+  author?: string;
+  updatedAt?: string;
   // From search results only: how the recipe fits the user's inventory.
   missingCount?: number;
   allergenOptional?: boolean;
