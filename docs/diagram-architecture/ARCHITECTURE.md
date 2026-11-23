@@ -20,8 +20,8 @@ flowchart LR
             api --> static
         end
 
-        pg[("SQL · PostgreSQL 18.6<br/>db: project<br/>Relational tables")]
-        mg[("NoSQL · MongoDB 9.0<br/>db: project<br/>Document collections")]
+        pg[("PostgreSQL 18.6<br/>db: project<br/>Relational data")]
+        mg[("MongoDB 9.0<br/>db: project<br/>Documents and logs")]
     end
 
     user -->|"1. load app<br/>http://localhost:8081"| expo
@@ -62,13 +62,13 @@ flowchart LR
         hist["/history<br/>GET searches · visited · audit<br/>POST delete · clear"]
     end
 
-    subgraph PG["SQL · PostgreSQL (tables)"]
+    subgraph PG["PostgreSQL"]
         pgc["ingredient_categories · ingredients<br/>equipment · tags · preferences"]
         pgr["recipes + recipe_ingredients<br/>recipe_equipment · recipe_tags · recipe_preferences"]
         pgu["users + user_ingredients · user_equipment<br/>user_allergies · user_preferences"]
     end
 
-    subgraph MG["NoSQL · MongoDB (collections)"]
+    subgraph MG["MongoDB"]
         md["recipe_details<br/>(cooking steps)"]
         mb["bookmarks"]
         ms["search_history"]
@@ -90,101 +90,18 @@ flowchart LR
 ```
 
 **Split of responsibilities**
-- **SQL: PostgreSQL** holds structured, relational data: the catalog, recipes and their M:N relations, and the user's inventory, allergies and preferences.
+- **PostgreSQL** holds structured, relational data: the catalog, recipes and their M:N relations, and the user's inventory, allergies and preferences.
   The search runs here: include/exclude filters and ranking by fewest missing ingredients, with staples counted as owned.
-- **NoSQL: MongoDB** holds flexible documents and logs: cooking steps, bookmarks, search and visit history, and the audit trail.
+- **MongoDB** holds flexible documents and logs: cooking steps, bookmarks, search and visit history, and the audit trail.
 
-## 4. Database diagrams
-
-### 4.1 SQL: PostgreSQL ER diagram
-
-![SQL ER diagram](SQL%20Diagram.png)
-
-### 4.2 NoSQL: MongoDB document schema
-
-Database `project`, 5 collections. MongoDB has no foreign keys: `recipe_id` is a reference
-the backend keeps in sync with `recipes.recipe_id` in PostgreSQL (dotted lines). Dates are
-stored in UTC and returned as Thai time (UTC+7).
-
-```mermaid
-erDiagram
-    PG_recipes {
-        int recipe_id PK "in PostgreSQL (SQL), shown for reference"
-    }
-
-    recipe_details {
-        ObjectId _id PK
-        int recipe_id UK "ref recipes.recipe_id"
-        string author
-        string[] instructions "one entry per step"
-        date updated_at "set on every save (upsert)"
-    }
-
-    bookmarks {
-        ObjectId _id PK
-        int recipe_id UK "ref recipes.recipe_id"
-        date bookmarked_at
-    }
-
-    visited_recipes {
-        ObjectId _id PK
-        int recipe_id "ref recipes.recipe_id"
-        date visited_at "one doc per visit"
-    }
-
-    search_history {
-        ObjectId _id PK
-        string name "primary search (recipe name)"
-        object filters "secondary search, see below"
-        bool use_inventory "Use my kitchen toggle"
-        int[] available_ingredients "inventory snapshot"
-        int[] available_equipment "inventory snapshot"
-        int[] result_ids "ref recipes.recipe_id"
-        date searched_at
-    }
-
-    audit_logs {
-        ObjectId _id PK
-        string action "e.g. add_ingredient, edit_recipe"
-        object fields "id and name, or old_val and new_val"
-        date logged_at
-    }
-
-    PG_recipes ||..o| recipe_details : "details of"
-    PG_recipes ||..o| bookmarks : "bookmarked as"
-    PG_recipes ||..o{ visited_recipes : "visited in"
-    PG_recipes }o..o{ search_history : "returned in result_ids"
-```
-
-**Embedded objects**
-
-| Collection.field | Shape |
-|---|---|
-| `search_history.filters` | `{include_ingredients, exclude_ingredients, include_categories, exclude_categories, include_preferences, exclude_preferences}`, each `int[]` |
-| `audit_logs.fields` | add / delete: `{id, name}` · edit: `{old_val, new_val}` |
-
-`audit_logs.action` is `add_`, `edit_` or `delete_` followed by `ingredient`, `equipment`, `allergy` or `recipe`.
-
-**Indexes:** unique on `recipe_details.recipe_id` and `bookmarks.recipe_id`, created by `mongo_seed.js`.
-
-**Who writes each collection**
-
-| Collection | Written when | Read by |
-|---|---|---|
-| `recipe_details` | Recipe create / update (upsert) / delete, in the same transaction as PostgreSQL | `GET /recipes/{id}` |
-| `bookmarks` | Heart button: `POST /bookmarks/add`, `/delete` | `GET /bookmarks` |
-| `visited_recipes` | Automatically on `GET /recipes/{id}` | `GET /history/visited` |
-| `search_history` | Submitted search: `POST /recipes/search` with `log: true` | `GET /history/searches` |
-| `audit_logs` | Every inventory and recipe change, in the same transaction as PostgreSQL | `GET /history/audit` |
-
-## 5. Cross-database consistency (write path)
+## 4. Cross-database consistency (write path)
 
 ```mermaid
 sequenceDiagram
     participant B as Browser
     participant A as FastAPI router
-    participant P as PostgreSQL (SQL)
-    participant M as MongoDB (NoSQL)
+    participant P as PostgreSQL
+    participant M as MongoDB
 
     B->>A: POST /inventory/ingredients/add
     A->>P: BEGIN, then INSERT user_ingredients
@@ -204,7 +121,7 @@ sequenceDiagram
 ```
 
 
-## 6. Development and CI
+## 5. Development and CI
 
 ```mermaid
 flowchart LR
@@ -222,5 +139,5 @@ flowchart LR
 |---|---|
 | Frontend | Expo 58, React 19.3, React Native 0.88 + react-native-web, TypeScript |
 | Backend | Python 3.15, FastAPI, Uvicorn, psycopg 3 + psycopg-pool, pymongo |
-| Databases | SQL: PostgreSQL 18.6 · NoSQL: MongoDB 9.0 |
+| Databases | PostgreSQL 18.6, MongoDB 9.0 |
 | Tooling | Docker Compose (watch), uv workspace, pnpm, ruff, GitHub Actions |
