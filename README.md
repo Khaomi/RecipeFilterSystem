@@ -2,6 +2,10 @@
 
 This is a base for our database project
 
+## Presentation & Demo Video
+
+**Presentation Video:** [Database Project Presentation](https://youtu.be/7tIoXY2wpqQ)
+
 ## How to run
 
 - Copy `.env.example` and rename it to `.env`.
