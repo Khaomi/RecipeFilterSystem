@@ -99,7 +99,12 @@ export const InventoryModal: React.FC<Props> = ({
             style={styles.input}
           />
           {categories.length > 0 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.categoryScroll}
+              contentContainerStyle={styles.categoryScrollContent}
+            >
               {[null, ...categories].map((cat) => {
                 const on = category === cat;
                 return (
@@ -192,7 +197,10 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 8,
   },
-  categoryScroll: { flexGrow: 0, marginBottom: 8 },
+  // flexShrink 0: the sheet has a max height, and on web a horizontal ScrollView would
+  // otherwise shrink and clip the chips.
+  categoryScroll: { flexGrow: 0, flexShrink: 0, marginBottom: 8 },
+  categoryScrollContent: { alignItems: 'center', paddingVertical: 2 },
   categoryChip: {
     marginRight: 6,
     paddingHorizontal: 12,

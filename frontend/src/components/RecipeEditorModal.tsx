@@ -221,7 +221,12 @@ export const RecipeEditorModal: React.FC<Props> = ({
               placeholder="Search or pick a category to add an ingredient..."
               style={styles.input}
             />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryScroll}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.categoryScroll}
+              contentContainerStyle={styles.categoryScrollContent}
+            >
               {[null, ...categories].map((cat) => {
                 const on = ingredientCategory === cat;
                 return (
@@ -377,7 +382,8 @@ const styles = StyleSheet.create({
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
 
   // Ingredient picker: category chips + scrollable list
-  categoryScroll: { marginTop: 10, flexGrow: 0 },
+  categoryScroll: { marginTop: 10, flexGrow: 0, flexShrink: 0 },
+  categoryScrollContent: { alignItems: 'center', paddingVertical: 2 },
   categoryChip: {
     marginRight: 8,
     paddingHorizontal: 14,
